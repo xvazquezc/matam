@@ -83,11 +83,12 @@ class SGA(Assembler):
     def _assembler_bin(self):
         return binary_utils.Binary.assert_which('sga')
 
-    def build_command_line(self, fastq_file, workdir, read_correction='no', cpu=1, *args, **kwargs):
+    def build_command_line(self, fastq_file, workdir, read_correction='no', cpu=1, paired_end=False, *args, **kwargs):
         self.fastq_file = fastq_file
         self.workdir = workdir
         self.cpu = cpu
         self.read_correction = read_correction
+        self.paired_end = paired_end
 
         self.fasta_file =  os.path.join(workdir, 'assembly.fasta')
         logfile = os.path.join(workdir, 'assembly.log')
@@ -100,6 +101,8 @@ class SGA(Assembler):
         cmd_line += ' -o ' + self.fasta_file + ' --sga_bin ' + self.assembler_bin
         if self.read_correction in ('no', 'auto'):
             cmd_line += ' --no_correction' # !!! desactivate all SGA error corrections and filters
+        if self.paired_end:
+            cmd_line += ' --paired_end'
         cmd_line += ' --cpu ' + str(self.cpu)
         cmd_line += ' --tmp_dir %s' % tmp_dir
         cmd_line += ' >> ' + logfile + ' 2>&1'

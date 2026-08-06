@@ -159,7 +159,8 @@ def estimate_coverage(reads_fq, contigs_fa):
 
 def assemble_component(assembler_name,
                        in_fastq, workdir,
-                       read_correction, cpu, coverage_threshold):
+                       read_correction, cpu, coverage_threshold,
+                       paired_end=False):
 
     try:
         if read_correction != 'auto' and coverage_threshold is not None:
@@ -168,7 +169,7 @@ def assemble_component(assembler_name,
         logger.debug('Assembling: %s' % in_fastq)
         assembler_factory = AssemblerFactory()
         assembler = assembler_factory.get(assembler_name)
-        assembler.build_command_line(in_fastq, workdir, read_correction, cpu)
+        assembler.build_command_line(in_fastq, workdir, read_correction, cpu, paired_end=paired_end)
 
         fasta_file = assembler.run()
         if is_empty(fasta_file): return
@@ -178,7 +179,7 @@ def assemble_component(assembler_name,
 
         # Re-run the assembly with error correction activated when read_correction == auto
         if read_correction == 'auto' and estimated_cov is not None and estimated_cov > coverage_threshold:
-            assembler.build_command_line(in_fastq, workdir, 'yes', cpu)
+            assembler.build_command_line(in_fastq, workdir, 'yes', cpu, paired_end=paired_end)
             fasta_file = assembler.run()
             if is_empty(fasta_file): return
             estimated_cov2 = estimate_coverage(in_fastq, fasta_file)
@@ -226,7 +227,8 @@ def _get_workdir(fq):
 def assemble_all_components(assembler_name,
                             fastq, read_metanode_component_filepath, components_lca_filepath,
                             out_contigs_fasta, workdir,
-                            cpu, read_correction, coverage_threshold):
+                            cpu, read_correction, coverage_threshold,
+                            paired_end=False):
 
 
     logger.info("Save components to fastq files")
@@ -241,7 +243,7 @@ def assemble_all_components(assembler_name,
     params = []
     component_id_list = []
     for component_id, fq in components_reads_fq:
-        params.append((assembler_name, fq, _get_workdir(fq), read_correction, 1, coverage_threshold))
+        params.append((assembler_name, fq, _get_workdir(fq), read_correction, 1, coverage_threshold, paired_end))
         component_id_list.append(component_id)
 
     with multiprocessing.Pool(processes=cpu) as pool:
