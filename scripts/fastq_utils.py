@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import gzip
+
 def read_fastq_file_handle(fastq_file_handle):
     """
     Parse a fastq file and return a generator
@@ -34,7 +36,8 @@ def is_phred33(fastq, number_of_reads_to_test=-1):
     """
     min_ascii_code = 100
     max_ascii_code = 0
-    with open(fastq, 'r') as handler:
+    opener = gzip.open if fastq.endswith('.gz') else open
+    with opener(fastq, 'rt') as handler:
         for i, (header, seq, qual) in enumerate(read_fastq_file_handle(handler)):
             if number_of_reads_to_test > 0 and i >= number_of_reads_to_test:
                 break

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import gzip
 import subprocess
 import logging
 from collections import defaultdict
@@ -13,6 +14,12 @@ from fastq_utils import read_fastq_file_handle
 from assembler_factory import AssemblerFactory
 
 logger = logging.getLogger(__name__)
+
+
+def _open_fastq(path):
+    if path.endswith('.gz'):
+        return gzip.open(path, 'rt')
+    return open(path, 'r')
 
 
 def is_empty(fpath):
@@ -40,7 +47,7 @@ def extract_reads_by_component(fastq, read_metanode_component_filepath):
     # Storing reads for each component
     logger.debug('Storing reads by component from {}'.format(fastq))
     component_reads_dict = defaultdict(list)
-    with open(fastq, 'r') as fastq_fh:
+    with _open_fastq(fastq) as fastq_fh:
         for header, seq, qual in read_fastq_file_handle(fastq_fh):
             try:
                 component_reads_dict[read_component_dict[header]].append(tuple((header, seq, qual)))
@@ -125,7 +132,7 @@ def nucleotidic_number(fastx):
 
 
     count = 0
-    with open(fastx, 'r') as fastx_handle:
+    with _open_fastq(fastx) as fastx_handle:
         for rec in parser(fastx_handle):
             seq = rec[1]
             count += len(seq)

@@ -709,7 +709,12 @@ def main():
 
     input_fastq_filepath = args.input_fastq
     input_fastq_filename = os.path.basename(input_fastq_filepath)
-    input_fastq_basename, input_fastq_extension = os.path.splitext(input_fastq_filename)
+    input_fastq_is_gzipped = input_fastq_filename.endswith('.gz')
+    if input_fastq_is_gzipped:
+        _inner_name = input_fastq_filename[:-3]
+        input_fastq_basename, input_fastq_extension = os.path.splitext(_inner_name)
+    else:
+        input_fastq_basename, input_fastq_extension = os.path.splitext(input_fastq_filename)
 
     ref_db_basepath = args.ref_db
     ref_db_dir, ref_db_basename = os.path.split(ref_db_basepath)
@@ -915,7 +920,10 @@ def main():
 
     if run_step and args.verbose:
         if input_fastq_extension in ('.fq', '.fastq'):
-            input_fastq_line_nb = int(subprocess.check_output('wc -l {0}'.format(input_fastq_filepath), shell=True, bufsize=0).split()[0])
+            if input_fastq_is_gzipped:
+                input_fastq_line_nb = int(subprocess.check_output('zcat {0} | wc -l'.format(input_fastq_filepath), shell=True, bufsize=0).split()[0])
+            else:
+                input_fastq_line_nb = int(subprocess.check_output('wc -l {0}'.format(input_fastq_filepath), shell=True, bufsize=0).split()[0])
             if input_fastq_line_nb % 4 != 0:
                 logger.fatal('FastQ input file does not have a number of lines multiple of 4')
                 sys.exit('Wrong number of lines')
