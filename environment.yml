@@ -17,11 +17,11 @@ dependencies:
   - wget
   - bzip2
   - zlib
-  - python >=3
+  - python >=3.14
   - numpy
   - samtools
   - sga
-  - sortmerna>=4.0
+  - sortmerna>=5.0
   - vsearch
   - seqkit
   - cd-hit
@@ -33,7 +33,6 @@ dependencies:
   - git
   - pytest
   - exonerate==2.2
-  - quast==5.0.2
 
 
 prefix: /home/lcouderc/miniconda3
