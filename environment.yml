@@ -23,6 +23,8 @@ dependencies:
   - sga
   - sortmerna>=4.0
   - vsearch
+  - seqkit
+  - cd-hit
   - rdptools
   - krona
 

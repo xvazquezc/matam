@@ -24,10 +24,6 @@ matam_root_dir = os.path.dirname(matam_bin_dir)
 matam_script_dir = os.path.join(matam_root_dir, 'scripts')
 extract_taxo_bin = os.path.join(matam_script_dir, 'extract_taxo_from_fasta.py')
 replace_Ns_bin = os.path.join(matam_script_dir, 'replace_Ns_by_As.py')
-sort_fasta_bin = os.path.join(matam_script_dir, 'sort_fasta_by_length.py')
-fasta_length_filter_bin = os.path.join(matam_script_dir, 'fasta_length_filter.py')
-fasta_name_filter_bin = os.path.join(matam_script_dir, 'fasta_name_filter.py')
-clean_name_bin = os.path.join(matam_script_dir, 'fasta_clean_name.py')
 
 # Define a null file handle
 FNULL = open(os.devnull, 'w')
@@ -283,6 +279,9 @@ if __name__ == '__main__':
     # Init list of tmp files to delete at the end
     to_rm_filepath_list = list()
 
+    # Resolve multithreaded tool binaries
+    seqkit_bin = Binary.assert_which('seqkit')
+
     ##############################################
     # Set all files and directories names + paths
 
@@ -373,12 +372,13 @@ if __name__ == '__main__':
     cmd_line += ' | sed "/^>/!s/U/T/g" | sed "/^>/!s/u/t/g" | sed "/^>/!s/ //g"'
     cmd_line += ' | ' + replace_Ns_bin + ' -n {0} '.format(args.max_consecutive_n)
     if args.min_length or args.max_length:
-        cmd_line += ' | ' + fasta_length_filter_bin
+        cmd_line += ' | ' + seqkit_bin + ' seq'
         if args.min_length:
             cmd_line += ' -m ' + str(args.min_length)
         if args.max_length:
             cmd_line += ' -M ' + str(args.max_length)
-    cmd_line += ' | ' + sort_fasta_bin + ' --reverse > '
+        cmd_line += ' -j ' + str(args.cpu)
+    cmd_line += ' | ' + seqkit_bin + ' sort -l -r -j ' + str(args.cpu) + ' > '
     cmd_line += cleaned_complete_ref_db_filepath
 
     logger.debug('CMD: {0}'.format(cmd_line))
@@ -409,9 +409,10 @@ if __name__ == '__main__':
             # Extracting kingdoms fasta files
             logger.info('Extracting sequences from {0} kingdom'.format(kingdom))
 
-            cmd_line = fasta_name_filter_bin + ' -i ' + cleaned_complete_ref_db_filepath
-            cmd_line += ' -s \' ' + kingdom + '\' > '  # !! need to be a space before the kingdom
-            cmd_line += cleaned_complete_ref_db_kingdom_filepath
+            cmd_line = seqkit_bin + ' grep -n -r -i -p \' ' + kingdom + '\''
+            cmd_line += ' -j ' + str(args.cpu)
+            cmd_line += ' ' + cleaned_complete_ref_db_filepath
+            cmd_line += ' > ' + cleaned_complete_ref_db_kingdom_filepath
 
             logger.debug('CMD: {0}'.format(cmd_line))
             error_code += subprocess.call(cmd_line, shell=True)
@@ -466,9 +467,9 @@ if __name__ == '__main__':
             error_code += subprocess.call(cmd_line, shell=True, stdout=FNULL, stderr=FNULL)
     vsearch_centroids_filepath = vsearch_output_filepath
 
-    # Clean fasta headers
-    cmd_line = clean_name_bin + ' -i ' + vsearch_centroids_filepath
-    cmd_line += ' -o ' + clustered_ref_db_filepath
+    # Clean fasta headers (strip description, keep ID only)
+    cmd_line = seqkit_bin + ' seq --only-id -j ' + str(args.cpu)
+    cmd_line += ' -o ' + clustered_ref_db_filepath + ' ' + vsearch_centroids_filepath
 
     logger.debug('CMD: {0}'.format(cmd_line))
     error_code += subprocess.call(cmd_line, shell=True)

@@ -685,6 +685,8 @@ def main():
     scaffold_contigs_bin = os.path.join(matam_script_dir, 'scaffold_contigs.py')
     fasta_length_filter_bin = os.path.join(matam_script_dir, 'fasta_length_filter.py')
     sortmerna_bin = Binary.assert_which('sortmerna')
+    seqkit_bin = Binary.assert_which('seqkit')
+    cdhit_bin = Binary.assert_which('cd-hit-est')
     ovgraphbuild_bin = Binary.assert_which('ovgraphbuild')
     componentsearch_bin = Binary.assert_which('componentsearch')
     krona_bin = Binary.assert_which('ktImportText')
@@ -1276,16 +1278,18 @@ def main():
         # TO DO, if it gets better results:
         # remove redundant sequences in contigs
 
-        # Remove redundant contigs
-        cmd_line = remove_redundant_bin + ' -i ' + contigs_symlink_filepath
+        # Remove redundant contigs (cd-hit-est: exact substring containment, no reverse complement)
+        cmd_line = cdhit_bin + ' -i ' + contigs_symlink_filepath
         cmd_line += ' -o ' + contigs_NR_filepath
+        cmd_line += ' -c 1.0 -aS 1.0 -G 0 -r 0 -d 0'
+        cmd_line += ' -T ' + str(args.cpu)
 
         runner.logged_check_call(cmd_line, verbose=args.verbose)
 
         # Filter out small contigs
-        cmd_line = fasta_length_filter_bin + ' -m ' + str(args.min_scaffold_length)
-        cmd_line += ' -i ' + contigs_NR_filepath
-        cmd_line += ' -o ' + large_NR_contigs_filepath
+        cmd_line = seqkit_bin + ' seq -m ' + str(args.min_scaffold_length)
+        cmd_line += ' -j ' + str(args.cpu)
+        cmd_line += ' -o ' + large_NR_contigs_filepath + ' ' + contigs_NR_filepath
 
         runner.logged_check_call(cmd_line, verbose=args.verbose)
 
@@ -1434,16 +1438,18 @@ def main():
             os.remove(scaffolds_symlink_filepath)
         os.symlink(os.path.basename(scaffolds_filepath), scaffolds_symlink_filepath)
 
-        # Remove redundant scaffolds
-        cmd_line = remove_redundant_bin + ' -i ' + scaffolds_symlink_filepath
+        # Remove redundant scaffolds (cd-hit-est: exact substring containment, no reverse complement)
+        cmd_line = cdhit_bin + ' -i ' + scaffolds_symlink_filepath
         cmd_line += ' -o ' + scaffolds_NR_filepath
+        cmd_line += ' -c 1.0 -aS 1.0 -G 0 -r 0 -d 0'
+        cmd_line += ' -T ' + str(args.cpu)
 
         runner.logged_check_call(cmd_line, verbose=args.verbose)
 
         # Filter out small scaffolds
-        cmd_line = fasta_length_filter_bin + ' -m ' + str(args.min_scaffold_length)
-        cmd_line += ' -i ' + scaffolds_NR_filepath
-        cmd_line += ' -o ' + large_NR_scaffolds_filepath
+        cmd_line = seqkit_bin + ' seq -m ' + str(args.min_scaffold_length)
+        cmd_line += ' -j ' + str(args.cpu)
+        cmd_line += ' -o ' + large_NR_scaffolds_filepath + ' ' + scaffolds_NR_filepath
 
         runner.logged_check_call(cmd_line, verbose=args.verbose)
 
