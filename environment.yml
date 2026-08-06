@@ -21,7 +21,7 @@ dependencies:
   - numpy
   - samtools
   - sga
-  - sortmerna==2.1b
+  - sortmerna>=4.0
   - vsearch
   - rdptools
   - krona

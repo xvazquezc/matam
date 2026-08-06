@@ -13,11 +13,11 @@ from fasta_clean_name import read_fasta_file_handle, format_seq
 
 logger = logging.getLogger(__name__)
 
-def index_ref(indexdb_bin_path, input_fasta_ref_path, output_basepath, max_mem, verbose=False):
+def index_ref(sortmerna_bin_path, input_fasta_ref_path, workdir, verbose=False):
     logger.info('--- Indexing scaffolds ---')
     logger.debug('File to index:  %s' % input_fasta_ref_path)
-    parameters = { 'input': input_fasta_ref_path, 'output': output_basepath, 'max_mem': max_mem }
-    cmd_line = '{bin} --ref {input},{output} -m {max_mem}'.format(bin=indexdb_bin_path, **parameters)
+    cmd_line = '{bin} --ref {input} --workdir {workdir} --index 1'.format(
+        bin=sortmerna_bin_path, input=input_fasta_ref_path, workdir=workdir)
 
     if verbose:
         cmd_line += ' -v'
@@ -25,16 +25,16 @@ def index_ref(indexdb_bin_path, input_fasta_ref_path, output_basepath, max_mem, 
     runner.logged_check_call(cmd_line, verbose=verbose)
 
 
-def reads_mapping(sortmerna_bin, fasta_ref_path, index_ref_basepath, reads_path, output_basepath, best, min_lis, evalue, cpu, verbose=False):
+def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, reads_path, output_basepath, best, evalue, cpu, verbose=False):
 
     logger.info('--- Reads mapping against scaffolds ---')
-    logger.debug('Database:%s' % index_ref_basepath)
-    parameters = { 'fasta_ref': fasta_ref_path, 'index_ref': index_ref_basepath, 'reads': reads_path, 'output':output_basepath,
-                   'best': best, 'min': min_lis, 'evalue': evalue, 'cpu': cpu }
+    logger.debug('Database:%s' % workdir)
+    parameters = { 'fasta_ref': fasta_ref_path, 'workdir': workdir, 'reads': reads_path, 'output': output_basepath,
+                   'best': best, 'evalue': evalue, 'cpu': cpu }
 
-    cmd_line = '{bin} --ref {fasta_ref},{index_ref} --reads {reads} --aligned {output}' \
-               ' --fastx --sam --blast "1" --log --best {best} --min_lis {min}' \
-               ' -e {evalue:.2e} -a {cpu}'.format(bin=sortmerna_bin, **parameters)
+    cmd_line = '{bin} --ref {fasta_ref} --workdir {workdir} --reads {reads} --aligned {output}' \
+               ' --fastx --sam --blast 1' \
+               ' --num_alignments {best} -e {evalue:.2e} -a {cpu}'.format(bin=sortmerna_bin, **parameters)
     if verbose:
         cmd_line += ' -v'
 
@@ -93,9 +93,9 @@ to the abundance of this scaffold only as 1 weight where weight=1/uniq_scaffolds
     return abundance_by_scaffold
 
 
-def get_abundance_by_scaffold(idx_bin, map_bin, best_bin,
+def get_abundance_by_scaffold(sortmerna_bin, best_bin,
                               input_fasta_ref, input_fastq_reads,
-                              best=10, min_lis=10, evalue=1e-05,
+                              best=10, evalue=1e-05,
                               max_mem=10000, cpu=4,
                               output_dir_basepath="/tmp/",
                               verbose=False,
@@ -105,13 +105,13 @@ def get_abundance_by_scaffold(idx_bin, map_bin, best_bin,
     outdir = tempfile.mkdtemp(dir=output_dir_basepath, prefix='abundance_')
 
     #index ref
-    idx_ref_basepath = os.path.join(outdir, 'idx_prefix')
+    smr_workdir = os.path.join(outdir, 'smr_workdir')
 
-    index_ref(idx_bin, input_fasta_ref, idx_ref_basepath, max_mem, verbose=verbose)
+    index_ref(sortmerna_bin, input_fasta_ref, smr_workdir, verbose=verbose)
 
     #reads mapping
     filtered_basepath = os.path.join(outdir, 'filt_prefix')
-    reads_mapping(map_bin, input_fasta_ref, idx_ref_basepath, input_fastq_reads, filtered_basepath, best, min_lis, evalue, cpu, verbose=verbose)
+    reads_mapping(sortmerna_bin, input_fasta_ref, smr_workdir, input_fastq_reads, filtered_basepath, best, evalue, cpu, verbose=verbose)
 
     #best matches
     blast_path = '%s.blast' % filtered_basepath

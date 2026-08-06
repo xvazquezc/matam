@@ -136,14 +136,14 @@ if __name__ == '__main__':
     ######################################################
     # SortMeRNA indexing of complete and clustered ref db
 
-    indexdb_bin = Binary.assert_which('indexdb_rna')
+    sortmerna_bin = Binary.assert_which('sortmerna')
 
     # SortMeRNA complete ref db indexing
     logger.info('Indexing complete ref db')
 
-    cmd_line = indexdb_bin + ' --ref ' + complete_ref_db_filepath
-    cmd_line += ',' + complete_ref_db_basepath
-    cmd_line += ' -m {0}'.format(args.max_memory)
+    cmd_line = sortmerna_bin + ' --ref ' + complete_ref_db_filepath
+    cmd_line += ' --workdir ' + complete_ref_db_basepath + '.smr'
+    cmd_line += ' --index 1'
     if args.verbose:
         cmd_line += ' -v '
 
@@ -155,9 +155,9 @@ if __name__ == '__main__':
     # SortMeRNA clustered ref db indexing
     logger.info('Indexing clustered ref db')
 
-    cmd_line = indexdb_bin + ' --ref ' + clustered_ref_db_filepath
-    cmd_line += ',' + clustered_ref_db_basepath
-    cmd_line += ' -m {0}'.format(args.max_memory)
+    cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
+    cmd_line += ' --workdir ' + clustered_ref_db_basepath + '.smr'
+    cmd_line += ' --index 1'
     if args.verbose:
         cmd_line += ' -v '
 

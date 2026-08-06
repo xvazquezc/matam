@@ -685,7 +685,6 @@ def main():
     scaffold_contigs_bin = os.path.join(matam_script_dir, 'scaffold_contigs.py')
     fasta_length_filter_bin = os.path.join(matam_script_dir, 'fasta_length_filter.py')
     sortmerna_bin = Binary.assert_which('sortmerna')
-    indexdb_bin = Binary.assert_which('indexdb_rna')
     ovgraphbuild_bin = Binary.assert_which('ovgraphbuild')
     componentsearch_bin = Binary.assert_which('componentsearch')
     krona_bin = Binary.assert_which('ktImportText')
@@ -767,6 +766,9 @@ def main():
     clustered_ref_db_basepath = os.path.join(ref_db_dir, clustered_ref_db_basename)
     clustered_ref_db_filename = clustered_ref_db_basename + '.fasta'
     clustered_ref_db_filepath = os.path.join(ref_db_dir, clustered_ref_db_filename)
+    clustered_ref_db_smr_dir = clustered_ref_db_basepath + '.smr'
+
+    complete_ref_db_smr_dir = complete_ref_db_basepath + '.smr'
 
     # Read mapping
     sortme_output_basename = input_fastq_basename
@@ -999,10 +1001,15 @@ def main():
         logger.info('=== Reads mapping against ref db ===')
 
         cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
-        cmd_line += ',' + clustered_ref_db_basepath + ' --reads '
-        cmd_line += input_fastq_filepath + ' --aligned ' + sortme_output_basepath
-        cmd_line += ' --fastx --sam --blast "1" --log --best '
-        cmd_line += str(args.best) + ' --min_lis ' + str(args.min_lis)
+        cmd_line += ' --workdir ' + clustered_ref_db_smr_dir
+        if args.paired_end:
+            # SortMeRNA v4: pass forward and reverse as two separate --reads flags
+            cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
+        else:
+            cmd_line += ' --reads ' + input_fastq_filepath
+        cmd_line += ' --aligned ' + sortme_output_basepath
+        cmd_line += ' --fastx --sam --blast 1'
+        cmd_line += ' --num_alignments ' + str(args.best)
         cmd_line += ' -e {0:.2e}'.format(args.evalue)
         cmd_line += ' -a ' + str(args.cpu)
         if args.verbose:
@@ -1349,13 +1356,12 @@ def main():
         scaff_evalue = 1e-05
 
         cmd_line = sortmerna_bin
-        cmd_line += ' --ref ' + complete_ref_db_filepath + ',' + complete_ref_db_basepath
+        cmd_line += ' --ref ' + complete_ref_db_filepath
+        cmd_line += ' --workdir ' + complete_ref_db_smr_dir
         cmd_line += ' --reads ' + contigs_filepath
         cmd_line += ' --aligned ' + scaff_sortme_output_basepath
-        cmd_line += ' --sam --blast "1"'
+        cmd_line += ' --sam --blast 1'
         cmd_line += ' --num_alignments 0 '
-        #cmd_line += ' --num_seeds 3 '
-        #cmd_line += ' --best 0 --min_lis 10 '
         cmd_line += ' -e {0:.2e}'.format(scaff_evalue)
         cmd_line += ' -a ' + str(args.cpu)
         if args.verbose:
@@ -1528,9 +1534,9 @@ def main():
         # Set t0
         t0_wall = time.time()
 
-        abundance = get_abundance_by_scaffold(indexdb_bin, sortmerna_bin, get_best_matches_bin,
+        abundance = get_abundance_by_scaffold(sortmerna_bin, get_best_matches_bin,
                                               scaffolds_fasta, reads,
-                                              args.best, args.min_lis, args.evalue,
+                                              args.best, args.evalue,
                                               args.max_memory, args.cpu,
                                               output_dir_basepath=workdir,
                                               verbose=args.verbose,
