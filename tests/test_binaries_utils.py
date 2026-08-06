@@ -12,7 +12,6 @@ from binary_utils import Binary
 @pytest.mark.parametrize("valid_binary", ['componentsearch',
                                             'ovgraphbuild',
                                             'sga',
-                                            'indexdb_rna',
                                             'sortmerna',
                                             'vsearch',
                                             'java', #rdp

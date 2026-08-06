@@ -28,8 +28,6 @@ sort_fasta_bin = os.path.join(matam_script_dir, 'sort_fasta_by_length.py')
 fasta_length_filter_bin = os.path.join(matam_script_dir, 'fasta_length_filter.py')
 fasta_name_filter_bin = os.path.join(matam_script_dir, 'fasta_name_filter.py')
 clean_name_bin = os.path.join(matam_script_dir, 'fasta_clean_name.py')
-indexdb_bin = Binary.assert_which('indexdb_rna')
-vsearch_bin = Binary.assert_which('vsearch')
 
 # Define a null file handle
 FNULL = open(os.devnull, 'w')
@@ -389,6 +387,7 @@ if __name__ == '__main__':
     ####################
     # Ref DB clustering
 
+    vsearch_bin = Binary.assert_which('vsearch')
     logger.info('Starting ref db clustering')
 
     # Perform clustering, either by kingdom or at once
@@ -493,6 +492,8 @@ if __name__ == '__main__':
 
     ######################################################
     # SortMeRNA indexing of complete and clustered ref db
+
+    indexdb_bin = Binary.assert_which('indexdb_rna')
 
     # SortMeRNA complete ref db indexing
     logger.info('Indexing complete ref db')

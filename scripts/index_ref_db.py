@@ -21,7 +21,6 @@ matam_script_dir = os.path.dirname(index_ref_db_bin)
 matam_root_dir = os.path.dirname(matam_script_dir)
 
 # Get all dependencies bin
-indexdb_bin =  Binary.assert_which('indexdb_rna')
 
 
 class DefaultHelpParser(argparse.ArgumentParser):
@@ -136,6 +135,8 @@ if __name__ == '__main__':
 
     ######################################################
     # SortMeRNA indexing of complete and clustered ref db
+
+    indexdb_bin = Binary.assert_which('indexdb_rna')
 
     # SortMeRNA complete ref db indexing
     logger.info('Indexing complete ref db')
