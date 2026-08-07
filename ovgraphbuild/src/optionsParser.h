@@ -21,6 +21,9 @@ struct AlphaOptions
     int minOverlapLength;
     double idRateThreshold;
     int minNumTrailingMatches;
+    int threads;
+    int pairShardIndex;
+    int pairShardCount;
     bool verbose;
     bool debug;
     bool test;
@@ -31,6 +34,7 @@ struct AlphaOptions
         myRefFastaFile(""), mySamFile(""),
         outputBasename(""), outputASQG(false), outputCSV(false),
         minOverlapLength(0), idRateThreshold(100.0), minNumTrailingMatches(0),
+        threads(1), pairShardIndex(0), pairShardCount(1),
         verbose(false), debug(false), test(false),
         noIndel(false)
     {}

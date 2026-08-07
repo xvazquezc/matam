@@ -286,7 +286,8 @@ int main(int argc, char const ** argv)
 
     AlphaOptions options;
 
-    getOptions(options, argc, argv);
+    if (getOptions(options, argc, argv) != 0)
+        return 1;
 
     GlobalStatistics globalStats;
 
@@ -369,12 +370,20 @@ int main(int argc, char const ** argv)
     std::vector<TVertexDescriptor > vertices;
     TProperties readNames;
 
-    buildCompatibilityGraph(graph,
-                            vertices,
-                            readNames,
-                            globalStats,
-                            bamRecordBuffer,
-                            options);
+    try
+    {
+        buildCompatibilityGraph(graph,
+                                vertices,
+                                readNames,
+                                globalStats,
+                                bamRecordBuffer,
+                                options);
+    }
+    catch (std::exception const &error)
+    {
+        std::cerr << "ERROR: " << error.what() << "\n";
+        return 1;
+    }
 
     if (options.verbose)
     {

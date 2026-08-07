@@ -102,6 +102,6 @@ void computeAlignmentStats(OverlapStatistics &,
 /******************************************************************************
     Print the progress of the nested loop
 ******************************************************************************/
-void printProgress(std::ostream &, int32_t, int64_t, int64_t);
+void printProgress(std::ostream &, int64_t, int64_t, int64_t);
 
 #endif // COMPATIBILITYGRAPHBUILDING_H

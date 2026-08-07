@@ -1125,6 +1125,7 @@ def main():
         cmd_line += ovgraphbuild_basepath
         cmd_line += ' -r ' + clustered_ref_db_filepath
         cmd_line += ' -s ' + sam_cov_filt_filepath
+        cmd_line += ' --threads ' + str(args.cpu)
         if args.verbose:
             cmd_line += ' -v'
         if args.debug:

@@ -36,6 +36,12 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
         seqan::ArgParseArgument::INTEGER, "MIN"));
     seqan::addOption(parser, seqan::ArgParseOption( "", "no_indel", "Indels are not allowed in reads overlap."));
     seqan::addOption(parser, seqan::ArgParseOption( "", "illumina", "Optimize the parameters for illumina sequencing."));
+    seqan::addOption(parser, seqan::ArgParseOption( "t", "threads", "Number of graph-building worker threads (maximum used: 24).",
+        seqan::ArgParseArgument::INTEGER, "INT"));
+    seqan::addOption(parser, seqan::ArgParseOption( "", "pair-shard-index", "Zero-based pair shard index.",
+        seqan::ArgParseArgument::INTEGER, "INDEX"));
+    seqan::addOption(parser, seqan::ArgParseOption( "", "pair-shard-count", "Number of pair shards.",
+        seqan::ArgParseArgument::INTEGER, "COUNT"));
 
     // Define Options -- Section Misc.
     seqan::addSection(parser, "Misc.");
@@ -57,6 +63,13 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
     seqan::setDefaultValue(parser, "min_overlap", 50);
     seqan::setDefaultValue(parser, "id_threshold", 1);
     seqan::setDefaultValue(parser, "min_trail_matches", 3);
+    seqan::setDefaultValue(parser, "threads", 1);
+    seqan::setDefaultValue(parser, "pair-shard-index", 0);
+    seqan::setDefaultValue(parser, "pair-shard-count", 1);
+
+    seqan::setMinValue(parser, "threads", "1");
+    seqan::setMinValue(parser, "pair-shard-index", "0");
+    seqan::setMinValue(parser, "pair-shard-count", "1");
 
     // Parse command line
     auto res = seqan::parse(parser, argc, argv);
@@ -76,7 +89,16 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
     seqan::getOptionValue(options.minOverlapLength, parser, "min_overlap");
     seqan::getOptionValue(options.idRateThreshold, parser, "id_threshold");
     seqan::getOptionValue(options.minNumTrailingMatches, parser, "min_trail_matches");
+    seqan::getOptionValue(options.threads, parser, "threads");
+    seqan::getOptionValue(options.pairShardIndex, parser, "pair-shard-index");
+    seqan::getOptionValue(options.pairShardCount, parser, "pair-shard-count");
     options.noIndel = seqan::isSet(parser, "no_indel");
+
+    if (options.pairShardIndex >= options.pairShardCount)
+    {
+        std::cerr << "ERROR: --pair-shard-index must be smaller than --pair-shard-count\n";
+        return seqan::ArgumentParser::PARSE_ERROR;
+    }
 
     if (seqan::isSet(parser, "illumina"))
     {
@@ -131,6 +153,9 @@ int printStartingDebugAndVerboseInfo(AlphaOptions &options)
                   << "PARAM: Min Overlap:        \t" << options.minOverlapLength << "\n"
                   << "PARAM: Id Threshold:       \t" << options.idRateThreshold << "\n"
                   << "PARAM: NoIndel:            \t" << options.noIndel << "\n"
+                  << "PARAM: Threads:            \t" << options.threads << "\n"
+                  << "PARAM: Pair shard:         \t" << options.pairShardIndex
+                  << "/" << options.pairShardCount << "\n"
                   << "PARAM: Debug:              \t" << options.debug << "\n"
                   << "PARAM: Verbose:            \t" << options.verbose << "\n"
                   << "PARAM: Test:               \t" << options.test << "\n" << "\n";

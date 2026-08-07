@@ -1,5 +1,147 @@
 #include "compatibilityGraphBuilding.h"
 
+#include <atomic>
+#include <cstdio>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <thread>
+
+namespace
+{
+constexpr int MAX_WORKER_THREADS = 24;
+constexpr int CHUNKS_PER_WORKER = 8;
+
+struct PairRange
+{
+    int64_t begin;
+    int64_t end;
+    int64_t pairCount;
+};
+
+struct PairChunkResult
+{
+    PairRange range;
+    GlobalStatistics statistics;
+    int64_t completedPairs = 0;
+    std::string asqgFragment;
+    std::string csvEdgesFragment;
+    std::string error;
+};
+
+int64_t totalPairs(int64_t readCount)
+{
+    return readCount < 2 ? 0 : readCount * (readCount - 1) / 2;
+}
+
+int64_t pairsBefore(int64_t readCount, int64_t outerIndex)
+{
+    return outerIndex * (2 * readCount - outerIndex - 1) / 2;
+}
+
+int64_t balancedTarget(int64_t begin,
+                       int64_t end,
+                       int partIndex,
+                       int partCount)
+{
+    int64_t size = end - begin;
+    int64_t quotient = size / partCount;
+    int64_t remainder = size % partCount;
+    return begin + quotient * partIndex + std::min<int64_t>(partIndex, remainder);
+}
+
+int64_t nearestOuterBoundary(int64_t readCount,
+                             int64_t minOuterIndex,
+                             int64_t maxOuterIndex,
+                             int64_t targetPairCount)
+{
+    int64_t low = minOuterIndex;
+    int64_t high = maxOuterIndex;
+
+    while (low < high)
+    {
+        int64_t mid = low + (high - low) / 2;
+        if (pairsBefore(readCount, mid) < targetPairCount)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+
+    if (low > minOuterIndex)
+    {
+        int64_t previous = low - 1;
+        int64_t previousDistance = targetPairCount - pairsBefore(readCount, previous);
+        int64_t currentDistance = pairsBefore(readCount, low) - targetPairCount;
+        if (previousDistance <= currentDistance)
+            return previous;
+    }
+
+    return low;
+}
+
+PairRange partitionPairRange(int64_t readCount,
+                             int64_t outerBegin,
+                             int64_t outerEnd,
+                             int partIndex,
+                             int partCount)
+{
+    int64_t pairBegin = pairsBefore(readCount, outerBegin);
+    int64_t pairEnd = pairsBefore(readCount, outerEnd);
+    int64_t beginTarget = balancedTarget(pairBegin, pairEnd, partIndex, partCount);
+    int64_t endTarget = balancedTarget(pairBegin, pairEnd, partIndex + 1, partCount);
+
+    int64_t begin = nearestOuterBoundary(readCount, outerBegin, outerEnd, beginTarget);
+    int64_t end = nearestOuterBoundary(readCount, begin, outerEnd, endTarget);
+
+    return PairRange{begin, end, pairsBefore(readCount, end) - pairsBefore(readCount, begin)};
+}
+
+void mergeCompatibilityStatistics(GlobalStatistics &destination,
+                                  GlobalStatistics const &source)
+{
+    destination.numConsideredReadsPairs += source.numConsideredReadsPairs;
+    destination.readPairsWithCommonRefNum += source.readPairsWithCommonRefNum;
+    destination.numConsideredAlignmentsPairs += source.numConsideredAlignmentsPairs;
+    destination.alignmentsPairsWithCommonRefNum += source.alignmentsPairsWithCommonRefNum;
+    destination.numPotentialOverlaps += source.numPotentialOverlaps;
+    destination.numOverlaps += source.numOverlaps;
+    destination.enclosedOverlapsNum += source.enclosedOverlapsNum;
+    destination.compatibleReadPairsNum += source.compatibleReadPairsNum;
+    destination.incompatibleReadPairsNum += source.incompatibleReadPairsNum;
+    destination.neitherCompatNorIncompatReadPairsNum += source.neitherCompatNorIncompatReadPairsNum;
+    destination.truePositive += source.truePositive;
+    destination.falsePositive += source.falsePositive;
+    destination.trueNegative += source.trueNegative;
+    destination.falseNegative += source.falseNegative;
+}
+
+bool appendFile(std::ostream &destination, std::string const &sourceFilename)
+{
+    std::ifstream source(sourceFilename, std::ifstream::in);
+    if (!source)
+        return false;
+
+    source.seekg(0, std::ios::end);
+    if (source.tellg() == 0)
+        return true;
+    source.seekg(0, std::ios::beg);
+
+    destination << source.rdbuf();
+    return destination.good();
+}
+
+void removeFragments(std::vector<PairChunkResult> const &chunkResults)
+{
+    for (auto const &result : chunkResults)
+    {
+        if (!result.asqgFragment.empty())
+            std::remove(result.asqgFragment.c_str());
+        if (!result.csvEdgesFragment.empty())
+            std::remove(result.csvEdgesFragment.c_str());
+    }
+}
+}
+
 //template<typename T> class TD;
 
 /******************************************************************************
@@ -22,10 +164,15 @@ void buildCompatibilityGraph(TGraph &graph,
     // Initialize graph vertices and store read names
     initializeGraph(graph, vertices, readNames, bamRecordBuffer, options);
 
-    // Compute the compatibility for each read pair
+    // Compute the compatibility for the read pairs assigned to this shard.
     int64_t mappedReadsNum = bamRecordBuffer.size();
-    int64_t maxReadsPairs = mappedReadsNum * (mappedReadsNum - 1) / 2;
-    int64_t numConsideredReadsPairs = 0;
+    int64_t maxReadsPairs = totalPairs(mappedReadsNum);
+    int64_t outerEnd = std::max<int64_t>(0, mappedReadsNum - 1);
+    PairRange shardRange = partitionPairRange(mappedReadsNum,
+                                              0,
+                                              outerEnd,
+                                              options.pairShardIndex,
+                                              options.pairShardCount);
 
     if (options.debug)
     {
@@ -49,6 +196,8 @@ void buildCompatibilityGraph(TGraph &graph,
 
         // Opening ASQG output file
         asqgFile.open(asqgFilename, std::ofstream::out | std::ofstream::trunc);
+        if (!asqgFile)
+            throw std::runtime_error("could not open ASQG output file");
 
         // Write ASQG header
         asqgFile << "HT\tVN:i:1\tER:f:0\t"
@@ -71,6 +220,8 @@ void buildCompatibilityGraph(TGraph &graph,
         // Opening CSV output files
         csvNodesFile.open(csvNodesFilename, std::ofstream::out | std::ofstream::trunc);
         csvEdgesFile.open(csvEdgesFilename, std::ofstream::out | std::ofstream::trunc);
+        if (!csvNodesFile || !csvEdgesFile)
+            throw std::runtime_error("could not open CSV output files");
 
         // Write CSV nodes
         writeReadsToCSV(csvNodesFile, readNames, bamRecordBuffer, options);
@@ -80,62 +231,206 @@ void buildCompatibilityGraph(TGraph &graph,
         csvEdgesFile << "Source;Target;Type;Coemitted;Weight;Pid;MultiRef" << "\n";
     }
 
-    // Start the nested loop
-    auto bamRecordBufferItI = std::begin(bamRecordBuffer);
-    auto const bamRecordBufferEndItI = std::end(bamRecordBuffer)-1;
-    auto bamRecordBufferItJ = bamRecordBufferItI+1;
-    auto const bamRecordBufferEndItJ = std::end(bamRecordBuffer);
-
-    int64_t i=0, j=1;
-
-    // We go through every pair of read. For each pair we compare the alignments buffers.
-    for (; bamRecordBufferItI != bamRecordBufferEndItI; ++bamRecordBufferItI)
+    int cappedThreadCount = std::min(options.threads, MAX_WORKER_THREADS);
+    if (options.threads > MAX_WORKER_THREADS)
     {
-//        std::cerr << i << "\n" << std::flush;
+        std::cout << "INFO: Capping graph worker threads at "
+                  << MAX_WORKER_THREADS << " (requested " << options.threads << ")\n";
+    }
 
-        for (bamRecordBufferItJ = bamRecordBufferItI+1;
-             bamRecordBufferItJ != bamRecordBufferEndItJ;
-             ++bamRecordBufferItJ)
+    int64_t assignedOuterIndices = shardRange.end - shardRange.begin;
+    int targetChunkCount = cappedThreadCount == 1
+        ? 1
+        : cappedThreadCount * CHUNKS_PER_WORKER;
+    targetChunkCount = std::min<int64_t>(targetChunkCount,
+                                         std::max<int64_t>(1, assignedOuterIndices));
+
+    std::vector<PairChunkResult> chunkResults;
+    chunkResults.reserve(targetChunkCount);
+    for (int chunkIndex = 0; chunkIndex < targetChunkCount; ++chunkIndex)
+    {
+        PairRange range = partitionPairRange(mappedReadsNum,
+                                             shardRange.begin,
+                                             shardRange.end,
+                                             chunkIndex,
+                                             targetChunkCount);
+        if (range.pairCount == 0)
+            continue;
+
+        chunkResults.emplace_back();
+        chunkResults.back().range = range;
+    }
+
+    int workerCount = std::min<int>(cappedThreadCount, chunkResults.size());
+    std::vector<std::thread> workers;
+    std::string outputBasename(seqan::toCString(options.outputBasename));
+    std::atomic<size_t> nextChunk(0);
+    std::atomic<bool> stopWorkers(false);
+
+    try
+    {
+        for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
         {
-//            std::cerr << j << "\n" << std::flush;
-
-            ++numConsideredReadsPairs;
-
-            computeReadsPairCompatibility(globalStats,
-                                          asqgFile,
-                                          csvEdgesFile,
-                                          i,
-                                          j,
-                                          *bamRecordBufferItI,
-                                          *bamRecordBufferItJ,
-                                          readNames,
-                                          options);
-
-            if (options.verbose)
+            workers.emplace_back([&]()
             {
-                if (numConsideredReadsPairs <= (float)maxReadsPairs / 100.0)
-                    printProgress(std::cout, maxReadsPairs/100000, numConsideredReadsPairs, maxReadsPairs);
-                else
-                    printProgress(std::cout, maxReadsPairs/1000, numConsideredReadsPairs, maxReadsPairs);
-            }
+                while (!stopWorkers.load())
+                {
+                    size_t chunkIndex = nextChunk.fetch_add(1);
+                    if (chunkIndex >= chunkResults.size())
+                        break;
 
-            ++j;
+                    PairChunkResult &result = chunkResults[chunkIndex];
+                    std::ofstream chunkAsqgFile;
+                    std::ofstream chunkCsvEdgesFile;
+
+                    try
+                    {
+                        if (options.outputASQG)
+                        {
+                            result.asqgFragment = outputBasename + ".asqg.chunk-"
+                                                  + std::to_string(chunkIndex) + ".tmp";
+                            chunkAsqgFile.open(result.asqgFragment,
+                                               std::ofstream::out | std::ofstream::trunc);
+                            if (!chunkAsqgFile)
+                                throw std::runtime_error("could not open ASQG chunk fragment");
+                        }
+
+                        if (options.outputCSV)
+                        {
+                            result.csvEdgesFragment = outputBasename + ".edges.csv.chunk-"
+                                                      + std::to_string(chunkIndex) + ".tmp";
+                            chunkCsvEdgesFile.open(result.csvEdgesFragment,
+                                                   std::ofstream::out | std::ofstream::trunc);
+                            if (!chunkCsvEdgesFile)
+                                throw std::runtime_error("could not open CSV chunk fragment");
+                        }
+
+                        for (int64_t i = result.range.begin; i < result.range.end; ++i)
+                        {
+                            for (int64_t j = i + 1; j < mappedReadsNum; ++j)
+                            {
+                                computeReadsPairCompatibility(result.statistics,
+                                                              chunkAsqgFile,
+                                                              chunkCsvEdgesFile,
+                                                              i,
+                                                              j,
+                                                              bamRecordBuffer[i],
+                                                              bamRecordBuffer[j],
+                                                              readNames,
+                                                              options);
+                                ++result.completedPairs;
+
+                                if (options.verbose && workerCount == 1)
+                                {
+                                    int64_t step = result.completedPairs <= result.range.pairCount / 100.0
+                                        ? std::max<int64_t>(1, result.range.pairCount / 100000)
+                                        : std::max<int64_t>(1, result.range.pairCount / 1000);
+                                    printProgress(std::cout,
+                                                  step,
+                                                  result.completedPairs,
+                                                  result.range.pairCount);
+                                }
+                            }
+                        }
+
+                        if (options.outputASQG)
+                        {
+                            chunkAsqgFile.close();
+                            if (!chunkAsqgFile)
+                                throw std::runtime_error("could not write ASQG chunk fragment");
+                        }
+                        if (options.outputCSV)
+                        {
+                            chunkCsvEdgesFile.close();
+                            if (!chunkCsvEdgesFile)
+                                throw std::runtime_error("could not write CSV chunk fragment");
+                        }
+
+                        result.statistics.numConsideredReadsPairs = result.completedPairs;
+                    }
+                    catch (std::exception const &error)
+                    {
+                        result.error = error.what();
+                        stopWorkers.store(true);
+                    }
+                }
+            });
+        }
+    }
+    catch (...)
+    {
+        for (auto &worker : workers)
+            worker.join();
+        removeFragments(chunkResults);
+        throw;
+    }
+
+    for (auto &worker : workers)
+        worker.join();
+
+    for (auto const &result : chunkResults)
+    {
+        if (!result.error.empty())
+        {
+            removeFragments(chunkResults);
+            throw std::runtime_error(result.error);
+        }
+    }
+
+    int64_t completedPairs = 0;
+    for (auto const &result : chunkResults)
+    {
+        if (options.outputASQG && !appendFile(asqgFile, result.asqgFragment))
+        {
+            removeFragments(chunkResults);
+            throw std::runtime_error("could not merge ASQG chunk fragment");
+        }
+        if (options.outputCSV && !appendFile(csvEdgesFile, result.csvEdgesFragment))
+        {
+            removeFragments(chunkResults);
+            throw std::runtime_error("could not merge CSV chunk fragment");
         }
 
-        ++i;
-        j=i+1;
+        completedPairs += result.completedPairs;
+        mergeCompatibilityStatistics(globalStats, result.statistics);
     }
 
-    if (options.verbose)
-    {
-        printProgress(std::cout, 1, numConsideredReadsPairs, maxReadsPairs);
-        std::cout << "\n" << "\n";
-    }
-
+    removeFragments(chunkResults);
     asqgFile.close();
     csvEdgesFile.close();
 
-    globalStats.numConsideredReadsPairs += numConsideredReadsPairs;
+    if (options.pairShardCount > 1)
+    {
+        std::string metadataFilename = outputBasename + ".pair-shard.tsv";
+        std::ofstream metadataFile(metadataFilename,
+                                   std::ofstream::out | std::ofstream::trunc);
+        if (!metadataFile)
+            throw std::runtime_error("could not open pair shard metadata file");
+
+        metadataFile << "read_count\t" << mappedReadsNum << "\n"
+                     << "total_pair_count\t" << maxReadsPairs << "\n"
+                     << "shard_index\t" << options.pairShardIndex << "\n"
+                     << "shard_count\t" << options.pairShardCount << "\n"
+                     << "outer_begin\t" << shardRange.begin << "\n"
+                     << "outer_end\t" << shardRange.end << "\n"
+                     << "assigned_pair_count\t" << shardRange.pairCount << "\n"
+                     << "completed_pair_count\t" << completedPairs << "\n"
+                     << "requested_threads\t" << options.threads << "\n"
+                     << "thread_limit\t" << MAX_WORKER_THREADS << "\n"
+                     << "threads\t" << workerCount << "\n"
+                     << "chunk_count\t" << chunkResults.size() << "\n";
+    }
+
+    if (options.verbose || options.pairShardCount > 1)
+    {
+        std::cout << "INFO: Pair shard " << options.pairShardIndex
+                  << "/" << options.pairShardCount
+                  << " assigned outer range [" << shardRange.begin
+                  << ", " << shardRange.end << ")\n"
+                  << "INFO: Assigned read pairs: " << shardRange.pairCount
+                  << "/" << maxReadsPairs << "\n"
+                  << "INFO: Completed read pairs: " << completedPairs << "\n\n";
+    }
 }
 
 /******************************************************************************
@@ -555,7 +850,7 @@ void computeAlignmentStats(OverlapStatistics &alignOvStats,
     Print the progress of the nested loop
 ******************************************************************************/
 void printProgress(std::ostream &stream,
-                   int32_t step,
+                   int64_t step,
                    int64_t numConsideredReadsPairs,
                    int64_t maxReadsPairs)
 {
