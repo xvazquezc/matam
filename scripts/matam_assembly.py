@@ -241,6 +241,13 @@ def parse_arguments():
                             type = str,
                             help = 'Output directory.'
                                    'Default will be "matam_assembly"')
+    # --workdir
+    group_main.add_argument('--workdir',
+                            action = 'store',
+                            metavar = 'WORKDIR',
+                            type = str,
+                            help = 'Base directory for SortMeRNA run state. '
+                                   'Default is the output directory')
     # -v / --verbose
     group_main.add_argument('-v', '--verbose',
                             action = 'store_true',
@@ -521,6 +528,8 @@ def parse_arguments():
     if not args.out_dir:
         # args.out_dir = 'matam.{0}'.format(os.getpid())
         args.out_dir = 'matam_assembly'
+    if not args.workdir:
+        args.workdir = args.out_dir
 
     # Validate input: require either -i or both --forward and --reverse
     if not args.input_fastq and not (args.forward and args.reverse):
@@ -539,6 +548,7 @@ def parse_arguments():
         args.reverse = os.path.abspath(args.reverse)
     args.ref_db = os.path.abspath(args.ref_db)
     args.out_dir = os.path.abspath(args.out_dir)
+    args.workdir = os.path.abspath(args.workdir)
     if args.true_references:
         args.true_references = os.path.abspath(args.true_references)
     if args.true_ref_taxo:
@@ -628,6 +638,7 @@ def print_intro(args):
 
     # Main parameters
     cmd_line += '--out_dir {0} '.format(args.out_dir)
+    cmd_line += '--workdir {0} '.format(args.workdir)
     cmd_line += '--ref_db {0} '.format(args.ref_db)
     if args.input_fastq:
         cmd_line += '--input_fastq {0} '.format(args.input_fastq)
@@ -727,11 +738,12 @@ def main():
     workdir = os.path.join(args.out_dir, 'workdir')
 
     try:
-        if not os.path.exists(workdir):
-            logger.debug('mkdir {0}'.format(workdir))
-            os.makedirs(workdir)
+        for directory in (workdir, args.workdir):
+            if not os.path.exists(directory):
+                logger.debug('mkdir {0}'.format(directory))
+                os.makedirs(directory)
     except OSError:
-        logger.exception('Could not create output directory {0}'.format(workdir))
+        logger.exception('Could not create output or working directory')
         raise
 
     logger_filepath = os.path.join(args.out_dir, 'matam.log')
@@ -768,9 +780,11 @@ def main():
     clustered_ref_db_basepath = os.path.join(ref_db_dir, clustered_ref_db_basename)
     clustered_ref_db_filename = clustered_ref_db_basename + '.fasta'
     clustered_ref_db_filepath = os.path.join(ref_db_dir, clustered_ref_db_filename)
-    clustered_ref_db_smr_dir = clustered_ref_db_basepath + '.smr'
+    clustered_ref_db_smr_idx_dir = os.path.join(clustered_ref_db_basepath + '.smr', 'idx')
+    complete_ref_db_smr_idx_dir = os.path.join(complete_ref_db_basepath + '.smr', 'idx')
 
-    complete_ref_db_smr_dir = complete_ref_db_basepath + '.smr'
+    sortmerna_reads_workdir = os.path.join(args.workdir, 'sortmerna_reads_mapping')
+    sortmerna_scaffolding_workdir = os.path.join(args.workdir, 'sortmerna_scaffolding')
 
     # Read mapping
     sortme_output_basename = input_fastq_basename
@@ -1003,7 +1017,8 @@ def main():
         logger.info('=== Reads mapping against ref db ===')
 
         cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
-        cmd_line += ' --workdir ' + clustered_ref_db_smr_dir
+        cmd_line += ' --workdir ' + sortmerna_reads_workdir
+        cmd_line += ' --idx-dir ' + clustered_ref_db_smr_idx_dir
         if args.paired_end:
             # SortMeRNA v4: pass forward and reverse as two separate --reads flags
             cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
@@ -1013,7 +1028,7 @@ def main():
         cmd_line += ' --fastx --sam --blast 1'
         cmd_line += ' --num_alignments ' + str(args.best)
         cmd_line += ' -e {0:.2e}'.format(args.evalue)
-        cmd_line += ' -a ' + str(args.cpu)
+        cmd_line += ' --threads ' + str(args.cpu)
         if args.verbose:
             cmd_line += ' -v '
 
@@ -1361,13 +1376,14 @@ def main():
 
         cmd_line = sortmerna_bin
         cmd_line += ' --ref ' + complete_ref_db_filepath
-        cmd_line += ' --workdir ' + complete_ref_db_smr_dir
+        cmd_line += ' --workdir ' + sortmerna_scaffolding_workdir
+        cmd_line += ' --idx-dir ' + complete_ref_db_smr_idx_dir
         cmd_line += ' --reads ' + contigs_filepath
         cmd_line += ' --aligned ' + scaff_sortme_output_basepath
         cmd_line += ' --sam --blast 1'
         cmd_line += ' --num_alignments 0 '
         cmd_line += ' -e {0:.2e}'.format(scaff_evalue)
-        cmd_line += ' -a ' + str(args.cpu)
+        cmd_line += ' --threads ' + str(args.cpu)
         if args.verbose:
             cmd_line += ' -v '
 

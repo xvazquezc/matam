@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def index_ref(sortmerna_bin_path, input_fasta_ref_path, workdir, verbose=False):
     logger.info('--- Indexing scaffolds ---')
     logger.debug('File to index:  %s' % input_fasta_ref_path)
-    cmd_line = '{bin} --ref {input} --workdir {workdir} --index 1'.format(
+    cmd_line = '{bin} --ref {input} --workdir {workdir} --task 5'.format(
         bin=sortmerna_bin_path, input=input_fasta_ref_path, workdir=workdir)
 
     if verbose:
@@ -34,7 +34,7 @@ def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, reads_path, output_bas
 
     cmd_line = '{bin} --ref {fasta_ref} --workdir {workdir} --reads {reads} --aligned {output}' \
                ' --fastx --sam --blast 1' \
-               ' --num_alignments {best} -e {evalue:.2e} -a {cpu}'.format(bin=sortmerna_bin, **parameters)
+               ' --num_alignments {best} -e {evalue:.2e} --threads {cpu}'.format(bin=sortmerna_bin, **parameters)
     if verbose:
         cmd_line += ' -v'
 

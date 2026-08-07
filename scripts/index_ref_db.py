@@ -143,7 +143,7 @@ if __name__ == '__main__':
 
     cmd_line = sortmerna_bin + ' --ref ' + complete_ref_db_filepath
     cmd_line += ' --workdir ' + complete_ref_db_basepath + '.smr'
-    cmd_line += ' --index 1'
+    cmd_line += ' --task 5'
     if args.verbose:
         cmd_line += ' -v '
 
@@ -157,7 +157,7 @@ if __name__ == '__main__':
 
     cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
     cmd_line += ' --workdir ' + clustered_ref_db_basepath + '.smr'
-    cmd_line += ' --index 1'
+    cmd_line += ' --task 5'
     if args.verbose:
         cmd_line += ' -v '
 
