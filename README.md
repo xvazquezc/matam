@@ -111,6 +111,8 @@ Be aware than the **the sequence identifiers have to be unique** and the **the s
 
 ## <a id="database-preparation"></a>3.2 Database preparation (clustering & indexation)
 
+SortMeRNA 6 introduced an index format that is incompatible with indexes created by SortMeRNA 4 or 5. When upgrading, delete the `<prefix>.complete.smr` and `<prefix>.clustered.smr` directories, then rerun `index_ref_db.py` or `matam_db_preprocessing.py` before assembly.
+
 ### <a id="provided-database"></a>3.2.1 Provided database
 
 By default, MATAM provides a SSU rRNA reference database where the clusterisation step has already been done (i.e. the sequences sharing 95% of identity have been clustered with [Sumaclust](https://git.metabarcoding.org/obitools/sumaclust/wikis/home)).  
@@ -142,6 +144,8 @@ When your database is ready, then you will be able to reconstruct your markers:
   classification is done with RDP with the default training model "16srrna". So this mode may be not suitable for other phylogenetic markers.  
   `matam_assembly.py -d $DBDIR/prefix -i reads.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`  
     The taxonomic assignment is done with [RDP classifier](https://rdp.cme.msu.edu/) and the training model used by default is "16srrna"
+
+SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes remain under the database `.smr/idx` directories.
 
 where `$DBDIR` is the database directory and `prefix` is the common prefix used to name the database files.
 For example, with the default database, the prefix is SILVA_128_SSURef_NR95.  
