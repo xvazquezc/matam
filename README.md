@@ -11,9 +11,9 @@ The related article of this method is available [here](https://doi.org/10.1093/b
 # Table of contents
 * [1. Hardware requirements](#hardware-requirements)
 * [2. Installation](#installation)
-  * [2.1 MATAM with conda](#matam-with-conda) (recommended)
-  * [2.2 MATAM in Docker](#matam-in-docker)
-  * [2.3 MATAM from source code](#matam-from-source-code)
+  * [2.1 Current development version](#matam-from-source-code) (recommended)
+  * [2.2 Published Conda package](#matam-with-conda)
+  * [2.3 Published Docker image](#matam-in-docker)
 * [3. Run MATAM](#run-matam)
   * [3.1 Input data](#input-data)
   * [3.2 Database preparation](#database-preparation)
@@ -39,30 +39,59 @@ hardware configuration.
 
 # <a id="installation"></a>2. Installation
 
-There are three possible ways of installing MATAM: either with CONDA,
-or as a docker container, or directly from the source code.
+The current development version must be installed from this repository. The
+published Bioconda package and Docker image contain the upstream MATAM release,
+not the changes maintained in this fork.
 
-## <a id="matam-with-conda"></a>2.1 MATAM with conda
+## <a id="matam-from-source-code"></a>2.1 Current development version
+
+Install Conda or Miniconda first. Then clone this repository, create its Conda
+environment, and compile the two native executables:
+
+```bash
+git clone --recursive https://github.com/xvazquezc/matam.git
+cd matam
+conda env create --file environment.yml
+conda activate matam
+./build.py
+export PATH="$(pwd)/bin:$PATH"
+```
+
+To install the dependencies into an existing environment instead, replace the
+environment creation and activation commands above with:
+
+```bash
+conda env update --name <environment-name> --file environment.yml
+conda activate <environment-name>
+```
+
+The `export` command affects the current shell only. Add the absolute path to
+this repository's `bin` directory to your shell or workflow configuration if
+MATAM must remain available after the shell exits. Verify the installation
+with:
+
+```bash
+matam_assembly.py --help
+```
+
+`build.py` also initializes missing Git submodules, so an existing non-recursive
+clone can be built with the same command.
+
+## <a id="matam-with-conda"></a>2.2 Published Conda package
 
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/matam/badges/version.svg)](https://anaconda.org/bioconda/matam)
 
-Before you begin, you should have installed Miniconda or Anaconda. See https://docs.conda.io/projects/conda/en/latest/user-guide/install/ for more details.  
-Then you will need to add the followings channels:
+The upstream release, without this fork's development changes, is available as
+`bioconda::matam`.
+
+```bash
+conda install -c conda-forge -c bioconda bioconda::matam
 ```
-conda config --add channels defaults
-conda config --add channels bioconda
-conda config --add channels conda-forge
-```
-Finally, matam can be installed with:
 
-`conda install -c bioconda matam`
+## <a id="matam-in-docker"></a>2.3 Published Docker image
 
-All the commands used in this README will be available in your PATH.
-
-
-## <a id="matam-in-docker"></a>2.2 MATAM in Docker
-
-To retrieve the docker image, run the following command:
+The published BioContainer also contains the upstream release. To retrieve it,
+run:
 
 `docker pull quay.io/biocontainers/matam:{release_version}`
 
@@ -75,31 +104,6 @@ Noticed that you have to specify a docker volume to share data between the host 
 Finally, if you prefer an interactive session with the container, run:
 
 `docker run -it quay.io/biocontainers/matam:{release_version}`
-
-## <a id="matam-from-source-code"></a>2.3 MATAM from source code
-
-
-To install all of the needed dependencies you need conda installed. See the [following](#matam-with-conda) section for more details on how to configure conda.
-
-Then run the following commands:
-
-1. Cloning MATAM repository
-
-  `git clone https://github.com/bonsai-team/matam.git && cd matam`
-
-2. Install dependencies:
-  `conda env create -f environment.yml && conda activate matam`
-
-3. Compile MATAM
-
-  `./build.py`
-
-4. Update your PATH to make MATAM's commands available:
-
-  ```bash
-  echo 'export PATH="$MATAMDIR/bin:$PATH"' >> ~/.profile
-  source ~/.profile
-  ```
 
 
 # <a id="run-matam"></a>3. Run MATAM
