@@ -9,27 +9,29 @@ The related article of this method is available [here](https://doi.org/10.1093/b
 
 
 # Table of contents
-* [1. Hardware requirements](#hardware-requirements)
-* [2. Installation](#installation)
-  * [2.1 Current development version](#matam-from-source-code) (recommended)
-  * [2.2 Published Conda package](#matam-with-conda)
-  * [2.3 Published Docker image](#matam-in-docker)
-* [3. Run MATAM](#run-matam)
-  * [3.1 Input data](#input-data)
-  * [3.2 Database preparation](#database-preparation)
-    * [3.2.1 Provided database](#provided-database)
-    * [3.2.2 Custom database](#custom-database)
-  * [3.3 De-novo assembly](#de-novo-assembly)
-  * [3.4 Example with default database and provided dataset](#example-with-default-database-and-provided-dataset)
-* [4. Samples Comparaison](#samples-comparaison)
-* [5. Release versioning](#release-versioning)
+- [MATAM](#matam)
+- [Table of contents](#table-of-contents)
+- [1. Hardware requirements](#1-hardware-requirements)
+- [2. Installation](#2-installation)
+  - [2.1 Current development version](#21-current-development-version)
+  - [2.2 Published Conda package](#22-published-conda-package)
+  - [2.3 Published Docker image](#23-published-docker-image)
+- [3. Run MATAM](#3-run-matam)
+  - [3.1 Input data](#31-input-data)
+  - [3.2 Database preparation (clustering \& indexation)](#32-database-preparation-clustering--indexation)
+    - [3.2.1 Provided database](#321-provided-database)
+    - [3.2.2 Custom database](#322-custom-database)
+  - [3.3 De-novo assembly](#33-de-novo-assembly)
+  - [3.4 Example with default database and provided dataset](#34-example-with-default-database-and-provided-dataset)
+- [4. Samples comparaison](#4-samples-comparaison)
+- [5. Release versioning](#5-release-versioning)
 
 
 # <a id="hardware-requirements"></a>1. Hardware requirements
 
-We recommend running MATAM with at least 10Go of free RAM. You can try
+We recommend running MATAM with at least 10Gb of free RAM. You can try
 running MATAM with less RAM by setting  --max_memory  to a lower value
-(eg. --max_memory 4000 for 4Go). However, this could degrade the performance of the
+(eg. --max_memory 4000 for 4Gb). However, this could degrade the performance of the
 software.
 
 Some steps of MATAM are highly parallelized. So you can get a
