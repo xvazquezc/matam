@@ -36,11 +36,11 @@ class Assembler:
         raise NotImplementedError( "Should have implemented this method: '%s'" % self._assembler_bin.__name__ )
 
 
-    def build_command_line(self, fastq_file, workdir, read_correction='no', cpu=1, *args, **kwargs):
+    def build_command_line(self, forward_fastq, reverse_fastq, workdir, read_correction='no', cpu=1, *args, **kwargs):
         """
         Build the command line to run (*args & **kwargs are potential parameters)
         The command must run in self.workdir with a number of cpu limited to self.cpu.
-        It also has to take self.fastq_file as input file
+        It also has to take separate forward/reverse FastQ files as input.
         self.read_correction is a switch to take into account
         !!!! Important !!!!
         This method has to set the self.fasta_file which is the results of the assembly
@@ -57,13 +57,14 @@ class Assembler:
             logger.fatal('You have to call "build_command_line" method before "run" method')
             sys.exit("No command line available")
 
-        if self.fastq_file is None or not os.path.isfile(self.fastq_file):
-            logger.fatal('The input reads file does not exists:%s' % self.fastq_file)
-            sys.exit("Can't assemble %s" % self.fastq_file)
+        for reads_file in (self.forward_fastq, self.reverse_fastq):
+            if reads_file is None or not os.path.isfile(reads_file):
+                logger.fatal('The input reads file does not exists:%s' % reads_file)
+                sys.exit("Can't assemble %s" % reads_file)
 
         if self.workdir is None:
             logger.debug("Workdir is not set")
-            sys.exit("Can't assemble %s" % self.fastq_file)
+            sys.exit("Can't assemble %s" % self.forward_fastq)
 
         elif os.path.isdir(self.workdir):
             logger.debug("Remove previous assembler working dir before assembling:%s" % self.workdir)
@@ -83,26 +84,25 @@ class SGA(Assembler):
     def _assembler_bin(self):
         return binary_utils.Binary.assert_which('sga')
 
-    def build_command_line(self, fastq_file, workdir, read_correction='no', cpu=1, paired_end=False, *args, **kwargs):
-        self.fastq_file = fastq_file
+    def build_command_line(self, forward_fastq, reverse_fastq, workdir, read_correction='no', cpu=1, *args, **kwargs):
+        self.forward_fastq = forward_fastq
+        self.reverse_fastq = reverse_fastq
         self.workdir = workdir
         self.cpu = cpu
         self.read_correction = read_correction
-        self.paired_end = paired_end
 
         self.fasta_file =  os.path.join(workdir, 'assembly.fasta')
         logfile = os.path.join(workdir, 'assembly.log')
         tmp_dir = os.path.join(workdir, 'tmp')
 
 
-        cmd_line = 'echo "component #' + self.fastq_file + '" >> '
+        cmd_line = 'echo "component #' + self.forward_fastq + '" >> '
         cmd_line += logfile + ' && '
-        cmd_line += self.assembler_wrapper + ' -i ' + self.fastq_file
+        cmd_line += self.assembler_wrapper + ' --forward ' + self.forward_fastq
+        cmd_line += ' --reverse ' + self.reverse_fastq
         cmd_line += ' -o ' + self.fasta_file + ' --sga_bin ' + self.assembler_bin
         if self.read_correction in ('no', 'auto'):
             cmd_line += ' --no_correction' # !!! desactivate all SGA error corrections and filters
-        if self.paired_end:
-            cmd_line += ' --paired_end'
         cmd_line += ' --cpu ' + str(self.cpu)
         cmd_line += ' --tmp_dir %s' % tmp_dir
         cmd_line += ' >> ' + logfile + ' 2>&1'

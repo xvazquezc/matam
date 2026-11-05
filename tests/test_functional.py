@@ -16,6 +16,22 @@ sys.path.append(SCRIPTS_DIR)
 
 from binary_utils import Binary
 
+
+def split_interleaved_fastq(source, forward, reverse):
+    """Create separate R1/R2 files from the legacy bundled test fixture."""
+    with open(source) as input_handle, \
+            open(forward, 'w') as forward_handle, \
+            open(reverse, 'w') as reverse_handle:
+        while True:
+            first = [input_handle.readline() for _ in range(4)]
+            if not first[0]:
+                assert not any(first[1:])
+                return
+            second = [input_handle.readline() for _ in range(4)]
+            assert all(first) and all(second)
+            forward_handle.writelines(first)
+            reverse_handle.writelines(second)
+
 # skip all module tests if needed
 pytestmark = pytest.mark.skipif(
     not os.path.isdir(DB_DIR),
@@ -28,15 +44,19 @@ def matam_results():
     out = tempfile.mkdtemp(dir='/tmp/', prefix='matam_functionnal_test_')
     p = {
         'bin': os.path.join(SCRIPTS_DIR, 'matam_assembly.py'),
-        'reads': os.path.join(
+        'interleaved_reads': os.path.join(
             EXAMPLES_DIR,
             '16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq'
         ),
+        'forward': os.path.join(out, 'reads_R1.fq'),
+        'reverse': os.path.join(out, 'reads_R2.fq'),
         'db': os.path.join(DB_DIR, 'SILVA_128_SSURef_NR95'),
         'out': out,
         'cpu': multiprocessing.cpu_count()
     }
-    cmd = '{bin} -i {reads} -d {db} -o {out} --cpu {cpu} --max_memory 3000 \
+    split_interleaved_fastq(
+        p['interleaved_reads'], p['forward'], p['reverse'])
+    cmd = '{bin} --forward {forward} --reverse {reverse} -d {db} -o {out} --cpu {cpu} --max_memory 3000 \
         --debug --coverage_threshold 2000 \
         --perform_taxonomic_assignment'.format(**p)
 

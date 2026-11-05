@@ -110,6 +110,10 @@ Finally, if you prefer an interactive session with the container, run:
 
 # <a id="run-matam"></a>3. Run MATAM
 
+MATAM accepts paired reads only. Supply forward and reverse FastQ files with
+`--forward` and `--reverse`; single-end and pre-interleaved input are not
+supported.
+
 ## <a id="input-data"></a>3.1 Input data
 
 The reads used to reconstruct the markers must be provided under FASTQ format.  
@@ -143,12 +147,12 @@ where `$DBDIR` is the directory used to store the database.
 When your database is ready, then you will be able to reconstruct your markers:
 * Assembly only  
   In this mode, MATAM will reconstruct the full length sequences present in the sample.  
-  `matam_assembly.py -d $DBDIR/prefix -i reads.fastq --cpu 4 --max_memory 10000 -v`
+  `matam_assembly.py -d $DBDIR/prefix --forward reads_R1.fastq --reverse reads_R2.fastq --cpu 4 --max_memory 10000 -v`
 
 * Assembly and taxonomic assignment  
   In this mode, MATAM additionnaly provides a taxonomic classification of the sequences found, together with their abundance. Note that the
   classification is done with RDP with the default training model "16srrna". So this mode may be not suitable for other phylogenetic markers.  
-  `matam_assembly.py -d $DBDIR/prefix -i reads.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`  
+  `matam_assembly.py -d $DBDIR/prefix --forward reads_R1.fastq --reverse reads_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
     The taxonomic assignment is done with [RDP classifier](https://rdp.cme.msu.edu/) and the training model used by default is "16srrna"
 
 SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes remain under the database `.smr/idx` directories.
@@ -169,7 +173,7 @@ For example, with the default database, the prefix is SILVA_128_SSURef_NR95.
 
 3. De-novo assembly
 
-  `matam_assembly.py -d $DBDIR/SILVA_128_SSURef_NR95 -i 16sp.art_HS25_pe_100bp_50x.fq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
+  `matam_assembly.py -d $DBDIR/SILVA_128_SSURef_NR95 --forward 16sp_R1.fastq --reverse 16sp_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
 
 
 # <a id="samples-comparaison"></a>4. Samples comparaison

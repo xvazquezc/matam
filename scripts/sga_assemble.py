@@ -18,18 +18,19 @@ if __name__ == '__main__':
 
     # Arguments parsing
     parser = argparse.ArgumentParser(description='')
-    # -i / --input_fastq
-    parser.add_argument('-i', '--input_fastq',
+    # --forward / --reverse
+    parser.add_argument('--forward',
                         action='store',
                         metavar='FASTQ',
                         type=str,
                         required=True,
-                        help='Input fastq file')
-    # --paired_end
-    parser.add_argument('--paired_end',
-                        action='store_true',
-                        help='Input fastq is made of '
-                             'interleaved paired-end reads')
+                        help='Forward reads FastQ file')
+    parser.add_argument('--reverse',
+                        action='store',
+                        metavar='FASTQ',
+                        type=str,
+                        required=True,
+                        help='Reverse reads FastQ file')
     # -o / --output_contigs
     parser.add_argument('-o', '--output_contigs',
                         action='store',
@@ -71,7 +72,8 @@ if __name__ == '__main__':
     assembly_output_basename = 'assemble'
 
     # Get input and output files absolute paths
-    input_filepath = os.path.realpath(args.input_fastq)
+    forward_filepath = os.path.realpath(args.forward)
+    reverse_filepath = os.path.realpath(args.reverse)
     current_working_dir = os.getcwd()
 
     if (args.output_contigs[0] == '/' or args.output_contigs[0] == '~'):
@@ -99,7 +101,10 @@ if __name__ == '__main__':
     # Preprocessing
     preprocess_output = 'preprocess_output.fq'
 
-    cmd_line = args.sga_bin + ' preprocess -v ' + input_filepath
+    # SGA's paired-end mode accepts separate R1/R2 files and writes a
+    # pair-preserving preprocessed stream for the remaining assembly stages.
+    cmd_line = args.sga_bin + ' preprocess -v --pe-mode 1 '
+    cmd_line += forward_filepath + ' ' + reverse_filepath
     cmd_line += ' -o ' + preprocess_output
 
     sys.stdout.write('\nCMD: {0}\n\n'.format(cmd_line))
@@ -224,21 +229,7 @@ if __name__ == '__main__':
     sys.stdout.write('\nCMD: {0}\n\n'.format(cmd_line))
     subprocess.check_call(cmd_line, shell=True)
 
-    # Scaffolding
-    assembly_scaffolds_filename = assembly_output_basename + '-scaffolds.fa'
-
-    if args.paired_end:
-        cmd_line = 'bwa index ' + assembly_contigs_filename
-        #~ cmd_line
-
     ## Final post-processing
-    assembly_output_filename = assembly_output_basename
-    if args.paired_end:
-        assembly_output_filename += '-scaffolds.fa'
-    else:
-        assembly_output_filename += '-contigs.fa'
-
-    #~ cmd_line = 'cp ' + assembly_output_filename + ' '
     cmd_line = 'cp ' + assembly_contigs_filename + ' '
     cmd_line += output_filepath
 

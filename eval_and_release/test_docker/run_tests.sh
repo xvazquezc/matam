@@ -43,7 +43,7 @@ conda config --add channels conda-forge
 conda install -c bonsai-team/label/dev matam -y
 
 ## run matam
-#matam_assembly.py -i /tmp/16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq -d /tmp/db/SILVA_128_SSURef_NR95 --cpu 4 --max_memory 10000 -v -o /tmp/matam_out --perform_taxonomic_assignment
+#matam_assembly.py --forward /tmp/reads_R1.fq --reverse /tmp/reads_R2.fq -d /tmp/db/SILVA_128_SSURef_NR95 --cpu 4 --max_memory 10000 -v -o /tmp/matam_out --perform_taxonomic_assignment
 
 
 ## SIMPLE TESTS ##

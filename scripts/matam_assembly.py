@@ -9,6 +9,7 @@ import subprocess
 import time
 import logging
 import cProfile
+import gzip
 from collections import defaultdict
 import shutil
 
@@ -27,6 +28,13 @@ os.environ["LC_ALL"] = "C"
 
 # Create logger
 logger = logging.getLogger()
+
+
+def fastq_line_count(filepath):
+    """Return the number of text lines in a plain or gzipped FastQ file."""
+    opener = gzip.open if filepath.endswith('.gz') else open
+    with opener(filepath, 'rt') as fastq_fh:
+        return sum(1 for _ in fastq_fh)
 
 logging_config = dict(
     version = 1,
@@ -207,26 +215,21 @@ def parse_arguments():
 
     # Main parameters
     group_main = parser.add_argument_group('Main parameters')
-    # -i / --input_fastq (single-end or pre-interleaved paired reads)
-    group_main.add_argument('-i', '--input_fastq',
-                            action = 'store',
-                            metavar = 'FASTQ',
-                            type = str,
-                            help = 'Input reads file (fastq format, single-end or interleaved paired-end). '
-                                   'Mutually exclusive with --forward/--reverse')
     # --forward / --reverse (paired-end reads as separate files)
     group_main.add_argument('--forward',
                             action = 'store',
                             metavar = 'FASTQ',
                             type = str,
-                            help = 'Forward reads file for paired-end input (fastq format). '
-                                   'Must be used together with --reverse')
+                            required = True,
+                            help = 'Forward reads file (fastq format). '
+                                   'MATAM requires separate paired input files.')
     group_main.add_argument('--reverse',
                             action = 'store',
                             metavar = 'FASTQ',
                             type = str,
-                            help = 'Reverse reads file for paired-end input (fastq format). '
-                                   'Must be used together with --forward')
+                            required = True,
+                            help = 'Reverse reads file (fastq format). '
+                                   'MATAM requires separate paired input files.')
     # -d / --ref_db
     group_main.add_argument('-d', '--ref_db',
                             action = 'store',
@@ -531,21 +534,9 @@ def parse_arguments():
     if not args.workdir:
         args.workdir = args.out_dir
 
-    # Validate input: require either -i or both --forward and --reverse
-    if not args.input_fastq and not (args.forward and args.reverse):
-        parser.error('Either -i/--input_fastq or both --forward and --reverse must be specified')
-    if args.input_fastq and (args.forward or args.reverse):
-        parser.error('-i/--input_fastq cannot be used together with --forward/--reverse')
-    if (args.forward and not args.reverse) or (args.reverse and not args.forward):
-        parser.error('--forward and --reverse must both be specified for paired-end input')
-
     # Get absolute path for all arguments
-    if args.input_fastq:
-        args.input_fastq = os.path.abspath(args.input_fastq)
-    if args.forward:
-        args.forward = os.path.abspath(args.forward)
-    if args.reverse:
-        args.reverse = os.path.abspath(args.reverse)
+    args.forward = os.path.abspath(args.forward)
+    args.reverse = os.path.abspath(args.reverse)
     args.ref_db = os.path.abspath(args.ref_db)
     args.out_dir = os.path.abspath(args.out_dir)
     args.workdir = os.path.abspath(args.workdir)
@@ -640,10 +631,7 @@ def print_intro(args):
     cmd_line += '--out_dir {0} '.format(args.out_dir)
     cmd_line += '--workdir {0} '.format(args.workdir)
     cmd_line += '--ref_db {0} '.format(args.ref_db)
-    if args.input_fastq:
-        cmd_line += '--input_fastq {0} '.format(args.input_fastq)
-    else:
-        cmd_line += '--forward {0} --reverse {1} '.format(args.forward, args.reverse)
+    cmd_line += '--forward {0} --reverse {1} '.format(args.forward, args.reverse)
 
     # Print cmd line
     logger.info('CMD: {0}'.format(cmd_line))
@@ -672,16 +660,12 @@ def main():
     # Arguments parsing
     args = parse_arguments()
 
-    # Resolve paired-end mode
-    args.paired_end = bool(args.forward and args.reverse)
-    if args.paired_end:
-        # Use the forward file as the primary file for output naming
-        args.input_fastq = args.forward
+    # Use the forward file as the primary file for output naming.
+    args.input_fastq = args.forward
 
     # Get all dependencies bin
     matam_script_dir = os.path.join(matam_root_dir, 'scripts')
     clean_name_bin = os.path.join(matam_script_dir, 'fasta_clean_name.py')
-    interleave_bin = os.path.join(matam_script_dir, 'interleave_fastq.py')
     sample_sam_cov_bin = Binary.assert_which('sample_sam_by_coverage.py')
     filter_score_bin = os.path.join(matam_script_dir, 'filter_score_multialign.py')
     compute_lca_bin = os.path.join(matam_script_dir, 'compute_lca_from_tab.py')
@@ -963,19 +947,6 @@ def main():
     final_krona_tab_symlink_filepath = os.path.join(args.out_dir, 'krona.tab')
     final_krona_html_symlink_filepath = os.path.join(args.out_dir, 'krona.html')
 
-    ##########################################
-    # Interleave paired-end reads if required
-
-    if args.paired_end:
-        interleaved_fastq_filepath = os.path.join(workdir, input_fastq_basename + '.interleaved' + input_fastq_extension)
-        logger.info('=== Interleaving paired-end reads ===')
-        cmd_line = interleave_bin + ' ' + args.forward + ' ' + args.reverse + ' ' + interleaved_fastq_filepath
-        logger.debug('CMD: {0}'.format(cmd_line))
-        runner.logged_check_call(cmd_line, verbose=args.verbose)
-        input_fastq_filepath = interleaved_fastq_filepath
-        input_fastq_is_gzipped = False  # interleave_fastq.py outputs plain fastq
-        to_rm_filepath_list.append(interleaved_fastq_filepath)
-
     #################################
     # Compute input reads statistics
 
@@ -987,14 +958,16 @@ def main():
 
     if run_step and args.verbose:
         if input_fastq_extension in ('.fq', '.fastq'):
-            if input_fastq_is_gzipped:
-                input_fastq_line_nb = int(subprocess.check_output('zcat {0} | wc -l'.format(input_fastq_filepath), shell=True, bufsize=0).split()[0])
-            else:
-                input_fastq_line_nb = int(subprocess.check_output('wc -l {0}'.format(input_fastq_filepath), shell=True, bufsize=0).split()[0])
-            if input_fastq_line_nb % 4 != 0:
-                logger.fatal('FastQ input file does not have a number of lines multiple of 4')
+            input_fastq_line_nb = fastq_line_count(input_fastq_filepath)
+            reverse_fastq_line_nb = fastq_line_count(args.reverse)
+            if input_fastq_line_nb % 4 != 0 or reverse_fastq_line_nb % 4 != 0:
+                logger.fatal('A FastQ input file does not have a number of lines multiple of 4')
                 sys.exit('Wrong number of lines')
-            elif not is_phred33(input_fastq_filepath, number_of_reads_to_test=400):
+            elif input_fastq_line_nb != reverse_fastq_line_nb:
+                logger.fatal('Forward and reverse FastQ files have different numbers of reads')
+                sys.exit('Paired FastQ files differ in size')
+            elif (not is_phred33(input_fastq_filepath, number_of_reads_to_test=400) or
+                  not is_phred33(args.reverse, number_of_reads_to_test=400)):
                 logger.fatal('Due to SGA, MATAM support only FastQ file with an offset of +33')
                 sys.exit('Not a Phred+33 FastQ file')
             input_reads_nb = input_fastq_line_nb // 4
@@ -1019,11 +992,10 @@ def main():
         cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
         cmd_line += ' --workdir ' + sortmerna_reads_workdir
         cmd_line += ' --idx-dir ' + clustered_ref_db_smr_idx_dir
-        if args.paired_end:
-            # SortMeRNA v4: pass forward and reverse as two separate --reads flags
-            cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
-        else:
-            cmd_line += ' --reads ' + input_fastq_filepath
+        # SortMeRNA v7 accepts two separate read files.  ``--paired_in`` keeps
+        # complete pairs in its aligned FASTQ output.
+        cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
+        cmd_line += ' --paired_in'
         cmd_line += ' --aligned ' + sortme_output_basepath
         cmd_line += ' --fastx --sam --blast 1'
         cmd_line += ' --num_alignments ' + str(args.best)
@@ -1280,8 +1252,7 @@ def main():
         components_assembly.assemble_all_components(args.assembler,
                                                     sortme_output_fastq_filepath, read_metanode_component_filepath, components_lca_filepath,
                                                     contigs_filepath, contigs_assembly_wkdir,
-                                                    args.cpu, args.read_correction, args.contig_coverage_threshold,
-                                                    paired_end=args.paired_end)
+                                                    args.cpu, args.read_correction, args.contig_coverage_threshold)
 
         if not args.keep_tmp:
             shutil.rmtree(contigs_assembly_wkdir)

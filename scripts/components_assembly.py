@@ -29,9 +29,15 @@ def is_empty(fpath):
         pass
     return True
 
-def extract_reads_by_component(fastq, read_metanode_component_filepath):
-    if not os.path.isfile(fastq):
-        logger.fatal('The input reads file does not exists:%s' % fastq)
+def extract_interleaved_paired_reads_by_component(interleaved_fastq, read_metanode_component_filepath):
+    """Keep only complete pairs whose two reads belong to one component.
+
+    SortMeRNA's ``--paired_in`` output is pair-preserving but interleaved.  It
+    is used only as the hand-off from mapping; component files and SGA inputs
+    are always emitted as separate R1/R2 FastQ files.
+    """
+    if not os.path.isfile(interleaved_fastq):
+        logger.fatal('The input reads file does not exists:%s' % interleaved_fastq)
         sys.exit("An error occured. Can't extract component's reads")
 
     if not os.path.isfile(read_metanode_component_filepath):
@@ -45,14 +51,91 @@ def extract_reads_by_component(fastq, read_metanode_component_filepath):
         read_component_dict = {t[0]:t[2] for t in (l.split() for l in read_metanode_component_fh) if t[2] != 'NULL'}
 
     # Storing reads for each component
-    logger.debug('Storing reads by component from {}'.format(fastq))
-    component_reads_dict = defaultdict(list)
-    with _open_fastq(fastq) as fastq_fh:
-        for header, seq, qual in read_fastq_file_handle(fastq_fh):
+    logger.debug('Storing complete pairs by component from {}'.format(interleaved_fastq))
+    component_reads_dict = defaultdict(lambda: ([], []))
+    kept_pairs = 0
+    discarded_pairs = 0
+    with _open_fastq(interleaved_fastq) as fastq_fh:
+        reads = iter(read_fastq_file_handle(fastq_fh))
+        while True:
             try:
-                component_reads_dict[read_component_dict[header]].append(tuple((header, seq, qual)))
-            except KeyError:
-                pass
+                forward_read = next(reads)
+            except StopIteration:
+                break
+            try:
+                reverse_read = next(reads)
+            except StopIteration:
+                logger.fatal('SortMeRNA paired output ends with an orphan read: %s',
+                             interleaved_fastq)
+                sys.exit("An error occured. Can't extract component's reads")
+
+            forward_component = read_component_dict.get(forward_read[0])
+            reverse_component = read_component_dict.get(reverse_read[0])
+            if (forward_component is not None and
+                    forward_component == reverse_component):
+                component_reads_dict[forward_component][0].append(forward_read)
+                component_reads_dict[forward_component][1].append(reverse_read)
+                kept_pairs += 1
+            else:
+                # A pair with an unselected mate or mates in distinct graph
+                # components cannot preserve the original component semantics.
+                discarded_pairs += 1
+    logger.info('Kept %s complete same-component read pairs; discarded %s',
+                kept_pairs, discarded_pairs)
+    return component_reads_dict
+
+
+def extract_separate_paired_reads_by_component(forward_fastq, reverse_fastq,
+                                                read_metanode_component_filepath):
+    """Keep complete, same-component pairs from separate R1/R2 files."""
+    for fastq in (forward_fastq, reverse_fastq):
+        if not os.path.isfile(fastq):
+            logger.fatal('The input reads file does not exists:%s' % fastq)
+            sys.exit("An error occured. Can't extract component's reads")
+    if not os.path.isfile(read_metanode_component_filepath):
+        logger.fatal('The file storing the correspondance between reads and components does not exists:%s' % read_metanode_component_filepath)
+        sys.exit("An error occured. Can't extract component's reads")
+
+    with open(read_metanode_component_filepath, 'r') as component_fh:
+        read_component_dict = {
+            fields[0]: fields[2]
+            for fields in (line.split() for line in component_fh)
+            if fields[2] != 'NULL'
+        }
+
+    component_reads_dict = defaultdict(lambda: ([], []))
+    kept_pairs = 0
+    discarded_pairs = 0
+    with _open_fastq(forward_fastq) as forward_fh, _open_fastq(reverse_fastq) as reverse_fh:
+        forward_reads = iter(read_fastq_file_handle(forward_fh))
+        reverse_reads = iter(read_fastq_file_handle(reverse_fh))
+        while True:
+            try:
+                forward_read = next(forward_reads)
+            except StopIteration:
+                try:
+                    next(reverse_reads)
+                except StopIteration:
+                    break
+                logger.fatal('Paired FastQ files have different record counts')
+                sys.exit("An error occured. Can't extract component's reads")
+            try:
+                reverse_read = next(reverse_reads)
+            except StopIteration:
+                logger.fatal('Paired FastQ files have different record counts')
+                sys.exit("An error occured. Can't extract component's reads")
+
+            forward_component = read_component_dict.get(forward_read[0])
+            reverse_component = read_component_dict.get(reverse_read[0])
+            if (forward_component is not None and
+                    forward_component == reverse_component):
+                component_reads_dict[forward_component][0].append(forward_read)
+                component_reads_dict[forward_component][1].append(reverse_read)
+                kept_pairs += 1
+            else:
+                discarded_pairs += 1
+    logger.info('Kept %s complete same-component read pairs; discarded %s',
+                kept_pairs, discarded_pairs)
     return component_reads_dict
 
 
@@ -74,9 +157,10 @@ def save_components(component_reads_dict, directory):
     Take a dict (key=component_id, value=[header,seq,qual])
     and save each component to a file into the given directory:
     directory/
-        component_%s.fq % component_id
+        component%s_R1.fq
+        component%s_R2.fq
 
-    Return a dict (key=component_id, value=fastq_path)
+    Return a dict (key=component_id, value=(forward_fastq, reverse_fastq)).
     """
 
     try:
@@ -85,15 +169,16 @@ def save_components(component_reads_dict, directory):
         pass
 
     components_fq = {}
-    for component_id, reads_list in component_reads_dict.items():
-        fq_name = "component%s_reads.fq" % component_id
-        fq_path = os.path.join(directory, fq_name)
-        #logger.debug("Save component %s into %s" % (component_id, fq_path))
-        components_fq[component_id] = fq_path
+    for component_id, (forward_reads, reverse_reads) in component_reads_dict.items():
+        forward_path = os.path.join(directory, "component%s_R1.fq" % component_id)
+        reverse_path = os.path.join(directory, "component%s_R2.fq" % component_id)
+        components_fq[component_id] = (forward_path, reverse_path)
 
-        with open(fq_path, 'w') as component_fh:
-            for (header, seq, qual) in reads_list:
-                component_fh.write('@{}\n{}\n+\n{}\n'.format(header, seq, qual))
+        with open(forward_path, 'w') as forward_fh, open(reverse_path, 'w') as reverse_fh:
+            for (header, seq, qual) in forward_reads:
+                forward_fh.write('@{}\n{}\n+\n{}\n'.format(header, seq, qual))
+            for (header, seq, qual) in reverse_reads:
+                reverse_fh.write('@{}\n{}\n+\n{}\n'.format(header, seq, qual))
     return components_fq
 
 
@@ -138,12 +223,12 @@ def nucleotidic_number(fastx):
             count += len(seq)
     return count
 
-def estimate_coverage(reads_fq, contigs_fa):
+def estimate_coverage(forward_fq, reverse_fq, contigs_fa):
     """
     estimated_cov = reads_nt/contigs_nt
     """
 
-    reads_nt = nucleotidic_number(reads_fq)
+    reads_nt = nucleotidic_number(forward_fq) + nucleotidic_number(reverse_fq)
     contigs_nt = nucleotidic_number(contigs_fa)
     estimated_cov = None
 
@@ -157,39 +242,39 @@ def estimate_coverage(reads_fq, contigs_fa):
 
     return estimated_cov
 
-def assemble_component(assembler_name,
-                       in_fastq, workdir,
-                       read_correction, cpu, coverage_threshold,
-                       paired_end=False):
+def assemble_component(assembler_name, forward_fastq, reverse_fastq, workdir,
+                       read_correction, cpu, coverage_threshold):
 
     try:
         if read_correction != 'auto' and coverage_threshold is not None:
             logger.warning("Coverage_threshold %s makes no sense when read_correction is not auto. This argument will be ignored" % coverage_threshold)
 
-        logger.debug('Assembling: %s' % in_fastq)
+        logger.debug('Assembling: %s, %s' % (forward_fastq, reverse_fastq))
         assembler_factory = AssemblerFactory()
         assembler = assembler_factory.get(assembler_name)
-        assembler.build_command_line(in_fastq, workdir, read_correction, cpu, paired_end=paired_end)
+        assembler.build_command_line(forward_fastq, reverse_fastq, workdir,
+                                     read_correction, cpu)
 
         fasta_file = assembler.run()
         if is_empty(fasta_file): return
 
-        estimated_cov = estimate_coverage(in_fastq, fasta_file)
-        logger.debug("Estimated coverage:%s, %s" % (estimated_cov, in_fastq))
+        estimated_cov = estimate_coverage(forward_fastq, reverse_fastq, fasta_file)
+        logger.debug("Estimated coverage:%s, %s" % (estimated_cov, forward_fastq))
 
         # Re-run the assembly with error correction activated when read_correction == auto
         if read_correction == 'auto' and estimated_cov is not None and estimated_cov > coverage_threshold:
-            assembler.build_command_line(in_fastq, workdir, 'yes', cpu, paired_end=paired_end)
+            assembler.build_command_line(forward_fastq, reverse_fastq, workdir,
+                                         'yes', cpu)
             fasta_file = assembler.run()
             if is_empty(fasta_file): return
-            estimated_cov2 = estimate_coverage(in_fastq, fasta_file)
-            logger.debug("Estimated coverage, before:%s, after:%s, component:%s, cov_threshold:%s" % (estimated_cov, estimated_cov2, in_fastq, coverage_threshold))
+            estimated_cov2 = estimate_coverage(forward_fastq, reverse_fastq, fasta_file)
+            logger.debug("Estimated coverage, before:%s, after:%s, component:%s, cov_threshold:%s" % (estimated_cov, estimated_cov2, forward_fastq, coverage_threshold))
 
             # suspicious when estimate_cov is not None and estimated_cov2 is None
             if estimated_cov2 is None:
-                logger.warning("0 length contigs from reads component: %s" % in_fastq)
+                logger.warning("0 length contigs from reads component: %s" % forward_fastq)
     except SystemExit as se:
-        logger.fatal('MATAM failed to assemble component: %s', in_fastq)
+        logger.fatal('MATAM failed to assemble component: %s', forward_fastq)
         raise Exception # SystemExit cause the pool to hang, prefer a generic exception instead
 
     return fasta_file
@@ -224,15 +309,10 @@ def _get_workdir(fq):
     return '%s_assembly_wkdir' % assembler_wkdir_basename
 
 
-def assemble_all_components(assembler_name,
-                            fastq, read_metanode_component_filepath, components_lca_filepath,
-                            out_contigs_fasta, workdir,
-                            cpu, read_correction, coverage_threshold,
-                            paired_end=False):
-
-
+def assemble_components(assembler_name, components_dict, components_lca_filepath,
+                        out_contigs_fasta, workdir, cpu, read_correction,
+                        coverage_threshold):
     logger.info("Save components to fastq files")
-    components_dict = extract_reads_by_component(fastq, read_metanode_component_filepath)
     components_reads_fq = save_components(components_dict, workdir).items()
     assembled_components_fasta = {}
 
@@ -242,8 +322,10 @@ def assemble_all_components(assembler_name,
     # them into a list to be able to apply a map function on it
     params = []
     component_id_list = []
-    for component_id, fq in components_reads_fq:
-        params.append((assembler_name, fq, _get_workdir(fq), read_correction, 1, coverage_threshold, paired_end))
+    for component_id, (forward_fq, reverse_fq) in components_reads_fq:
+        params.append((assembler_name, forward_fq, reverse_fq,
+                       _get_workdir(forward_fq), read_correction, 1,
+                       coverage_threshold))
         component_id_list.append(component_id)
 
     with multiprocessing.Pool(processes=cpu) as pool:
@@ -266,6 +348,17 @@ def assemble_all_components(assembler_name,
                                      out_contigs_fasta, lca_dict)
 
 
+def assemble_all_components(assembler_name, interleaved_fastq,
+                            read_metanode_component_filepath, components_lca_filepath,
+                            out_contigs_fasta, workdir,
+                            cpu, read_correction, coverage_threshold):
+    components_dict = extract_interleaved_paired_reads_by_component(
+        interleaved_fastq, read_metanode_component_filepath)
+    assemble_components(assembler_name, components_dict, components_lca_filepath,
+                        out_contigs_fasta, workdir, cpu, read_correction,
+                        coverage_threshold)
+
+
 if __name__ == '__main__':
 
     FORMAT = '%(asctime)s - %(processName)s - %(levelname)s - %(message)s'
@@ -276,9 +369,13 @@ if __name__ == '__main__':
                         choices=[a.name() for a in AssemblerFactory.ASSEMBLER_ENGINES],
                         help="Select the assembler to be used. Default is %(default)s",
                         default="SGA")
-    parser.add_argument('-i', '--input_fastq',
+    parser.add_argument('--forward',
                         type=argparse.FileType('r'),
-                        help='input fastq file',
+                        help='forward reads fastq file',
+                        required=True)
+    parser.add_argument('--reverse',
+                        type=argparse.FileType('r'),
+                        help='reverse reads fastq file',
                         required=True)
     parser.add_argument('-m', '--reads_metanode',
                         type=argparse.FileType('r'),
@@ -318,7 +415,8 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    assemble_all_components(args.assembler,
-                            args.input_fastq.name, args.reads_metanode.name, args.components_lca.name,
-                            args.output_fasta, args.workdir,
-                            args.cpu, args.read_correction, args.contig_coverage_threshold)
+    components = extract_separate_paired_reads_by_component(
+        args.forward.name, args.reverse.name, args.reads_metanode.name)
+    assemble_components(args.assembler, components, args.components_lca.name,
+                        args.output_fasta, args.workdir, args.cpu,
+                        args.read_correction, args.contig_coverage_threshold)
