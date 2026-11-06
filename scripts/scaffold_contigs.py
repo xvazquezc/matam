@@ -7,7 +7,7 @@ from collections import defaultdict
 
 
 # Compile read bases regular expression
-read_bases_re = re.compile('\.|,|>|<|[ACGTNacgtn]|\+[0-9]+[ACGTNacgtn]+|\-[0-9]+[ACGTNacgtn]+|\*|\^.|\$')
+read_bases_re = re.compile(r'\.|,|>|<|[ACGTNacgtn]|\+[0-9]+[ACGTNacgtn]+|\-[0-9]+[ACGTNacgtn]+|\*|\^.|\$')
 
 
 def format_seq(seq, linereturn=80):

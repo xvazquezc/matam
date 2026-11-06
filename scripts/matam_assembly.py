@@ -703,7 +703,6 @@ def main():
     compute_lca_bin = os.path.join(matam_script_dir, 'compute_lca_from_tab.py')
     compute_compressed_graph_stats_bin = os.path.join(matam_script_dir, 'compute_compressed_graph_stats.py')
     remove_redundant_bin = os.path.join(matam_script_dir, 'remove_redundant_sequences.py')
-    fastq_name_filter_bin = os.path.join(matam_script_dir, 'fastq_name_filter.py')
     evaluate_assembly_bin = os.path.join(matam_script_dir, 'evaluate_assembly.py')
     get_best_matches_bin = os.path.join(matam_script_dir, 'get_best_matches_from_blast.py')
     gener_scaff_blast_bin = os.path.join(matam_script_dir, 'generate_scaffolding_blast.py')
@@ -1198,7 +1197,7 @@ def main():
         # Get compressed graph stats
         compressed_graph_nodes_nb = int(subprocess.check_output('wc -l {0}'.format(componentsearch_metanodes_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
         compressed_graph_edges_nb = int(subprocess.check_output('wc -l {0}'.format(componentsearch_metaedges_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
-        compressed_graph_reads_nb = int(subprocess.check_output('cut -d ";" -f5 {0} | awk "\$1!=-1" | wc -l'.format(componentsearch_components_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
+        compressed_graph_reads_nb = int(subprocess.check_output("cut -d ';' -f5 {0} | awk '$1!=-1' | wc -l".format(componentsearch_components_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
         compressed_graph_excluded_reads_nb = ovgraph_nodes_nb - compressed_graph_reads_nb
         excluded_reads_percent = compressed_graph_excluded_reads_nb * 100.0 / ovgraph_nodes_nb
         components_nb = int(subprocess.check_output('cut -d ";" -f5 {0} | {1} | uniq | wc -l'.format(componentsearch_components_csv_filepath, sort_bin), shell=True).split()[0]) - 1
@@ -1216,7 +1215,7 @@ def main():
 
         # Get read, metanode and component from the components file
         cmd_line = 'tail -n +2 ' + componentsearch_components_csv_filepath
-        cmd_line += ' | sed "s/;/\\t/g" | cut -f2,4,5 | awk "\$3>=0" '
+        cmd_line += " | sed 's/;/\\t/g' | cut -f2,4,5 | awk '$3>=0' "
         cmd_line += ' | ' + sort_bin + ' -k1,1 > '
         cmd_line += read_metanode_component_filepath
 
@@ -1228,7 +1227,7 @@ def main():
         # Output is (read, metanode, component, taxo) file
         cmd_line = 'cat ' + sam_filt_filepath + ' | cut -f1,3 | ' + sort_bin + ' -k2,2'
         cmd_line += ' | join -12 -21 - ' + complete_ref_db_taxo_filepath
-        cmd_line += ' | ' + sort_bin + ' -k2,2 | awk "{print \$2,\$3}" | sed "s/ /\\t/g" '
+        cmd_line += ' | ' + sort_bin + " -k2,2 | awk '{print $2,$3}' | sed 's/ /\\t/g' "
         cmd_line += ' | join -11 -21 ' + read_metanode_component_filepath
         cmd_line += ' - | sed "s/ /\\t/g" > '
         cmd_line += complete_taxo_filepath
