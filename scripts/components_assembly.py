@@ -10,6 +10,7 @@ import argparse
 
 from fasta_utils import read_fasta_file_handle, format_seq
 from fastq_utils import read_fastq_file_handle
+from pe_tables import load_read_components
 
 from assembler_factory import AssemblerFactory
 
@@ -29,57 +30,59 @@ def is_empty(fpath):
         pass
     return True
 
-def extract_interleaved_paired_reads_by_component(interleaved_fastq, read_metanode_component_filepath):
-    """Keep only complete pairs whose two reads belong to one component.
+def _iter_fastq_records(handle, source):
+    """Yield (read_id, seq, qual) from a 4-line FASTQ; empty input yields nothing."""
+    while True:
+        header = handle.readline()
+        if not header:
+            return
+        seq, separator, qual = handle.readline(), handle.readline(), handle.readline()
+        if not qual or not header.startswith('@') or not separator.startswith('+'):
+            logger.fatal('Malformed or truncated FASTQ record in %s: %r', source, header.strip())
+            sys.exit("An error occured. Can't extract component's reads")
+        yield header[1:].split()[0], seq.strip(), qual.strip()
 
-    SortMeRNA's ``--paired_in`` output is pair-preserving but interleaved.  It
-    is used only as the hand-off from mapping; component files and SGA inputs
-    are always emitted as separate R1/R2 FastQ files.
-    """
-    if not os.path.isfile(interleaved_fastq):
-        logger.fatal('The input reads file does not exists:%s' % interleaved_fastq)
-        sys.exit("An error occured. Can't extract component's reads")
 
+def pair_core_id(read_id):
+    """Pair identifier shared by both mates: the read ID without a /1 or /2 suffix."""
+    if len(read_id) > 2 and read_id[-2] == '/' and read_id[-1] in '12':
+        return read_id[:-2]
+    return read_id
+
+
+def _load_read_components(read_metanode_component_filepath):
     if not os.path.isfile(read_metanode_component_filepath):
         logger.fatal('The file storing the correspondance between reads and components does not exists:%s' % read_metanode_component_filepath)
         sys.exit("An error occured. Can't extract component's reads")
+    logger.debug('Reading (read, mate)-->component from {}'.format(read_metanode_component_filepath))
+    return {key: component
+            for key, (_, component) in load_read_components(read_metanode_component_filepath).items()}
 
-    # Reading read --> component file
-    logger.debug('Reading read-->component from {}'.format(read_metanode_component_filepath))
-    read_component_dict = dict()
-    with open(read_metanode_component_filepath, 'r') as read_metanode_component_fh:
-        read_component_dict = {t[0]:t[2] for t in (l.split() for l in read_metanode_component_fh) if t[2] != 'NULL'}
 
-    # Storing reads for each component
-    logger.debug('Storing complete pairs by component from {}'.format(interleaved_fastq))
+def _split_pairs_by_component(pairs, read_component_dict):
+    """Keep complete pairs whose two mates belong to one component.
+
+    Reads are looked up by (read ID, mate), so mates sharing an ID (CASAVA
+    naming) are distinct reads. A pair whose mates are in different components,
+    or with a mate outside every component, is discarded.
+    """
     component_reads_dict = defaultdict(lambda: ([], []))
     kept_pairs = 0
     discarded_pairs = 0
-    with _open_fastq(interleaved_fastq) as fastq_fh:
-        reads = iter(read_fastq_file_handle(fastq_fh))
-        while True:
-            try:
-                forward_read = next(reads)
-            except StopIteration:
-                break
-            try:
-                reverse_read = next(reads)
-            except StopIteration:
-                logger.fatal('SortMeRNA paired output ends with an orphan read: %s',
-                             interleaved_fastq)
-                sys.exit("An error occured. Can't extract component's reads")
-
-            forward_component = read_component_dict.get(forward_read[0])
-            reverse_component = read_component_dict.get(reverse_read[0])
-            if (forward_component is not None and
-                    forward_component == reverse_component):
-                component_reads_dict[forward_component][0].append(forward_read)
-                component_reads_dict[forward_component][1].append(reverse_read)
-                kept_pairs += 1
-            else:
-                # A pair with an unselected mate or mates in distinct graph
-                # components cannot preserve the original component semantics.
-                discarded_pairs += 1
+    for forward_read, reverse_read in pairs:
+        if pair_core_id(forward_read[0]) != pair_core_id(reverse_read[0]):
+            logger.fatal('Mates are out of sync: %s vs %s', forward_read[0], reverse_read[0])
+            sys.exit("An error occured. Can't extract component's reads")
+        forward_component = read_component_dict.get((forward_read[0], 1))
+        reverse_component = read_component_dict.get((reverse_read[0], 2))
+        if forward_component is not None and forward_component == reverse_component:
+            component_reads_dict[forward_component][0].append(forward_read)
+            component_reads_dict[forward_component][1].append(reverse_read)
+            kept_pairs += 1
+        else:
+            # A pair with an unselected mate or mates in distinct graph
+            # components cannot preserve the original component semantics.
+            discarded_pairs += 1
     logger.info('Kept %s complete same-component read pairs; discarded %s',
                 kept_pairs, discarded_pairs)
     return component_reads_dict
@@ -92,51 +95,24 @@ def extract_separate_paired_reads_by_component(forward_fastq, reverse_fastq,
         if not os.path.isfile(fastq):
             logger.fatal('The input reads file does not exists:%s' % fastq)
             sys.exit("An error occured. Can't extract component's reads")
-    if not os.path.isfile(read_metanode_component_filepath):
-        logger.fatal('The file storing the correspondance between reads and components does not exists:%s' % read_metanode_component_filepath)
-        sys.exit("An error occured. Can't extract component's reads")
+    read_component_dict = _load_read_components(read_metanode_component_filepath)
 
-    with open(read_metanode_component_filepath, 'r') as component_fh:
-        read_component_dict = {
-            fields[0]: fields[2]
-            for fields in (line.split() for line in component_fh)
-            if fields[2] != 'NULL'
-        }
-
-    component_reads_dict = defaultdict(lambda: ([], []))
-    kept_pairs = 0
-    discarded_pairs = 0
-    with _open_fastq(forward_fastq) as forward_fh, _open_fastq(reverse_fastq) as reverse_fh:
-        forward_reads = iter(read_fastq_file_handle(forward_fh))
-        reverse_reads = iter(read_fastq_file_handle(reverse_fh))
-        while True:
-            try:
-                forward_read = next(forward_reads)
-            except StopIteration:
-                try:
-                    next(reverse_reads)
-                except StopIteration:
+    def pairs():
+        with _open_fastq(forward_fastq) as forward_fh, _open_fastq(reverse_fastq) as reverse_fh:
+            forward_reads = _iter_fastq_records(forward_fh, forward_fastq)
+            reverse_reads = _iter_fastq_records(reverse_fh, reverse_fastq)
+            for forward_read in forward_reads:
+                reverse_read = next(reverse_reads, None)
+                if reverse_read is None:
                     break
-                logger.fatal('Paired FastQ files have different record counts')
-                sys.exit("An error occured. Can't extract component's reads")
-            try:
-                reverse_read = next(reverse_reads)
-            except StopIteration:
-                logger.fatal('Paired FastQ files have different record counts')
-                sys.exit("An error occured. Can't extract component's reads")
-
-            forward_component = read_component_dict.get(forward_read[0])
-            reverse_component = read_component_dict.get(reverse_read[0])
-            if (forward_component is not None and
-                    forward_component == reverse_component):
-                component_reads_dict[forward_component][0].append(forward_read)
-                component_reads_dict[forward_component][1].append(reverse_read)
-                kept_pairs += 1
+                yield forward_read, reverse_read
             else:
-                discarded_pairs += 1
-    logger.info('Kept %s complete same-component read pairs; discarded %s',
-                kept_pairs, discarded_pairs)
-    return component_reads_dict
+                if next(reverse_reads, None) is None:
+                    return
+            logger.fatal('Paired FastQ files have different record counts')
+            sys.exit("An error occured. Can't extract component's reads")
+
+    return _split_pairs_by_component(pairs(), read_component_dict)
 
 
 def extract_lca_by_component(components_lca_filepath):
@@ -346,12 +322,12 @@ def assemble_components(assembler_name, components_dict, components_lca_filepath
                                      out_contigs_fasta, lca_dict)
 
 
-def assemble_all_components(assembler_name, interleaved_fastq,
+def assemble_all_components(assembler_name, forward_fastq, reverse_fastq,
                             read_metanode_component_filepath, components_lca_filepath,
                             out_contigs_fasta, workdir,
                             cpu, read_correction, coverage_threshold):
-    components_dict = extract_interleaved_paired_reads_by_component(
-        interleaved_fastq, read_metanode_component_filepath)
+    components_dict = extract_separate_paired_reads_by_component(
+        forward_fastq, reverse_fastq, read_metanode_component_filepath)
     assemble_components(assembler_name, components_dict, components_lca_filepath,
                         out_contigs_fasta, workdir, cpu, read_correction,
                         coverage_threshold)

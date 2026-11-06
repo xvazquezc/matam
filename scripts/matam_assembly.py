@@ -20,6 +20,7 @@ from rdp import run_rdp_classifier, filter_rdp_file
 from krona import rdp_file_to_krona_text_file, make_krona_plot
 from binary_utils import Binary
 import components_assembly
+import pe_tables
 from assembler_factory import AssemblerFactory
 from fastq_utils import read_fastq_file_handle, is_phred33
 
@@ -114,9 +115,15 @@ matam_db_dir = os.path.join(matam_root_dir, 'db')
 default_ref_db = os.path.join(matam_db_dir, 'SILVA_128_SSURef_NR95')
 
 def force_symlink(target, link_name):
-    if os.path.exists(link_name):
+    if os.path.lexists(link_name):
         os.remove(link_name)
     os.symlink(target, link_name)
+
+
+def marker_reads_filepath(out_dir, mate_label, source_filepath):
+    """Stable path of the selected R1/R2 marker reads in the output directory."""
+    suffix = '.fq.gz' if source_filepath.endswith('.gz') else '.fq'
+    return os.path.join(out_dir, 'marker_reads_{}{}'.format(mate_label, suffix))
 
 
 def read_tab_file_handle_sorted(tab_file_handle, factor_index):
@@ -399,7 +406,8 @@ def parse_arguments():
                              action = 'store',
                              metavar = 'INT',
                              type = int,
-                             help = 'Seed to initialize random generator. '
+                             help = 'Seed to initialize the random generators of graph compaction '
+                                    'and of --coverage_threshold subsampling, for reproducible runs. '
                                     'Default is picking seed from system time')
     # --optimize_components
     group_gcomp.add_argument('--optimize_components',
@@ -699,6 +707,7 @@ def main():
     matam_script_dir = os.path.join(matam_root_dir, 'scripts')
     clean_name_bin = os.path.join(matam_script_dir, 'fasta_clean_name.py')
     sample_sam_cov_bin = Binary.assert_which('sample_sam_by_coverage.py')
+    sam_mates_bin = os.path.join(matam_script_dir, 'sam_mates.py')
     filter_score_bin = os.path.join(matam_script_dir, 'filter_score_multialign.py')
     compute_lca_bin = os.path.join(matam_script_dir, 'compute_lca_from_tab.py')
     compute_compressed_graph_stats_bin = os.path.join(matam_script_dir, 'compute_compressed_graph_stats.py')
@@ -807,7 +816,8 @@ def main():
     sortme_output_basename += '_b' + str(args.best) + '_m' + str(args.min_lis)
     sortme_output_basepath = os.path.join(workdir, sortme_output_basename)
 
-    sortme_output_fastq_filepath = None
+    sortme_output_forward_filepath = None
+    sortme_output_reverse_filepath = None
     sortme_output_sam_filepath = None
 
     # Alignments filtering
@@ -1001,14 +1011,15 @@ def main():
                   not is_phred33(args.reverse, number_of_reads_to_test=400)):
                 logger.fatal('Due to SGA, MATAM support only FastQ file with an offset of +33')
                 sys.exit('Not a Phred+33 FastQ file')
-            input_reads_nb = input_fastq_line_nb // 4
+            # Reads are counted as mates (R1 + R2), the unit used by every step.
+            input_reads_nb = (input_fastq_line_nb + reverse_fastq_line_nb) // 4
         else:
             logger.fatal('Input fastq file extension was not recognised ({0})'.format(input_fastq_extension))
             sys.exit('Wrong extension')
 
         logger.info('=== Input ===')
         logger.info('Input file: {}'.format(input_fastq_filepath))
-        logger.info('Input file reads nb: {} reads'.format(input_reads_nb))
+        logger.info('Input file reads nb: {} reads (R1 + R2 mates)'.format(input_reads_nb))
 
     ###############################
     # Reads mapping against ref db
@@ -1024,9 +1035,10 @@ def main():
         cmd_line += ' --workdir ' + sortmerna_reads_workdir
         cmd_line += ' --idx-dir ' + clustered_ref_db_smr_idx_dir
         # SortMeRNA v7 accepts two separate read files.  ``--paired_in`` keeps
-        # complete pairs in its aligned FASTQ output.
+        # complete pairs in its aligned FASTQ output, and ``--out2`` keeps the
+        # pairs as separate R1/R2 files (``<aligned>_fwd`` / ``<aligned>_rev``).
         cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
-        cmd_line += ' --paired_in'
+        cmd_line += ' --paired_in --out2'
         cmd_line += ' --aligned ' + sortme_output_basepath
         cmd_line += ' --fastx --sam --blast 1'
         cmd_line += ' --zip-out true'
@@ -1044,17 +1056,29 @@ def main():
         # Output running time
         logger.info('Reads mapping completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
 
-    sortme_output_fastq_filepath = find_sortmerna_output(
-        sortme_output_basepath, ('.fq', '.fastq'))
+    sortme_output_forward_filepath = find_sortmerna_output(
+        sortme_output_basepath + '_fwd', ('.fq', '.fastq'))
+    sortme_output_reverse_filepath = find_sortmerna_output(
+        sortme_output_basepath + '_rev', ('.fq', '.fastq'))
     sortme_output_sam_filepath = find_sortmerna_output(
         sortme_output_basepath, ('.sam',))
 
-    # Get selected reads number
+    # Expose the selected read pairs under stable names (also the output of
+    # --filter_only): <out_dir>/marker_reads_R1.fq[.gz] and _R2.
+    for mate_label, mate_filepath in (('R1', sortme_output_forward_filepath),
+                                      ('R2', sortme_output_reverse_filepath)):
+        force_symlink(
+            os.path.relpath(mate_filepath, start=args.out_dir),
+            marker_reads_filepath(args.out_dir, mate_label, mate_filepath),
+        )
+
+    # Get selected reads number (R1 + R2 mates)
     selected_reads_nb = -1
 
     if args.verbose:
         if input_fastq_extension in ('.fq', '.fastq'):
-            selected_fastq_line_nb = fastq_line_count(sortme_output_fastq_filepath)
+            selected_fastq_line_nb = (fastq_line_count(sortme_output_forward_filepath) +
+                                      fastq_line_count(sortme_output_reverse_filepath))
             selected_reads_nb = selected_fastq_line_nb // 4
 
         logger.info('Identified as marker: {} / {} reads ({:.2f}%)'.format(selected_reads_nb, input_reads_nb, selected_reads_nb*100.0/input_reads_nb))
@@ -1077,9 +1101,13 @@ def main():
     if run_step:
         logger.info('=== Alignment filtering ===')
 
-        cmd_line = stream_file_command(sortme_output_sam_filepath)
-        cmd_line += ' | grep -v "^@" | '
-        cmd_line += sort_bin + ' -k 1,1V -k 12,12Vr'
+        # SortMeRNA writes FLAG 0/16 only, and CASAVA-named mates share one
+        # QNAME. Restore the SAM mate flags (0x40/0x80) from the paired FASTX
+        # output so that every following step keys reads on (QNAME, mate).
+        # The tagged records are grouped per read, as the filter requires.
+        cmd_line = sam_mates_bin + ' -s ' + shlex.quote(sortme_output_sam_filepath)
+        cmd_line += ' -1 ' + shlex.quote(sortme_output_forward_filepath)
+        cmd_line += ' -2 ' + shlex.quote(sortme_output_reverse_filepath)
         cmd_line += ' | ' + filter_score_bin + ' -t ' + str(args.score_threshold)
         if not args.straight_mode:
             cmd_line += ' --geometric'
@@ -1089,23 +1117,29 @@ def main():
         t0_wall = time.time()
 
         logger.debug('CMD: {0}'.format(cmd_line))
-        runner.logged_check_call(cmd_line, verbose=args.verbose)
+        runner.logged_check_call(cmd_line, verbose=args.verbose, pipefail=True)
 
         # Output running time
         logger.info('Good alignments filtering completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
 
         if args.coverage_threshold:
             cmd_line = 'cat ' + sam_filt_filepath
-            cmd_line += ' | ' + sort_bin + ' -k 3,3 -k 4,4n'
+            # Stable sort: alignments starting at the same position keep the
+            # input read order, so a given --seed samples the same reads.
+            cmd_line += ' | ' + sort_bin + ' -s -k 3,3 -k 4,4n'
             cmd_line += ' | ' + sample_sam_cov_bin + ' -c ' + str(args.coverage_threshold)
             cmd_line += ' -r ' + clustered_ref_db_filepath
-            cmd_line += ' | ' + sort_bin + ' -k 1,1V -k 12,12Vr'
+            if args.seed is not None:
+                cmd_line += ' --seed ' + str(args.seed)
+            # Restore per-read grouping: FLAG sorts R1 (65/73/81/89) before
+            # R2 (129/137/145/153); sam_mates.py rejects 0x100/0x800 records.
+            cmd_line += ' | ' + sort_bin + ' -k 1,1V -k 2,2n'
             cmd_line += ' > ' + sam_cov_filt_filepath
 
             # Set t0
             t0_wall = time.time()
 
-            runner.logged_check_call(cmd_line, verbose=args.verbose)
+            runner.logged_check_call(cmd_line, verbose=args.verbose, pipefail=True)
 
             # Output running time
             logger.info('Ref coverage filtering completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
@@ -1197,10 +1231,13 @@ def main():
         # Get compressed graph stats
         compressed_graph_nodes_nb = int(subprocess.check_output('wc -l {0}'.format(componentsearch_metanodes_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
         compressed_graph_edges_nb = int(subprocess.check_output('wc -l {0}'.format(componentsearch_metaedges_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
-        compressed_graph_reads_nb = int(subprocess.check_output("cut -d ';' -f5 {0} | awk '$1!=-1' | wc -l".format(componentsearch_components_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
+        # Reads are (QNAME, mate) nodes; read the component column by name.
+        components_of_reads = [component for _, _, _, component
+                               in pe_tables.iter_components_csv(componentsearch_components_csv_filepath)]
+        compressed_graph_reads_nb = sum(1 for component in components_of_reads if component >= 0)
         compressed_graph_excluded_reads_nb = ovgraph_nodes_nb - compressed_graph_reads_nb
         excluded_reads_percent = compressed_graph_excluded_reads_nb * 100.0 / ovgraph_nodes_nb
-        components_nb = int(subprocess.check_output('cut -d ";" -f5 {0} | {1} | uniq | wc -l'.format(componentsearch_components_csv_filepath, sort_bin), shell=True).split()[0]) - 1
+        components_nb = len({component for component in components_of_reads if component >= 0})
 
         logger.info('Compressed graph: {} components'.format(components_nb))
 
@@ -1213,34 +1250,24 @@ def main():
         # Set t0
         t0_wall = time.time()
 
-        # Get read, metanode and component from the components file
-        cmd_line = 'tail -n +2 ' + componentsearch_components_csv_filepath
-        cmd_line += " | sed 's/;/\\t/g' | cut -f2,4,5 | awk '$3>=0' "
-        cmd_line += ' | ' + sort_bin + ' -k1,1 > '
-        cmd_line += read_metanode_component_filepath
+        # Get (read, mate, metanode, component) from the components file.
+        # Mates sharing a QNAME are distinct reads (see sam_mates.py).
+        pe_tables.write_read_component_table(componentsearch_components_csv_filepath,
+                                             read_metanode_component_filepath)
 
+        # Join the filtered alignments with the reference taxonomies and the
+        # read components on (read, mate).
+        # Output is (read, mate, metanode, component, taxo), one row per alignment
+        pe_tables.write_complete_taxo_table(sam_filt_filepath, complete_ref_db_taxo_filepath,
+                                            read_metanode_component_filepath, complete_taxo_filepath)
 
-        error_code += runner.logged_call(cmd_line, verbose=args.verbose)
-
-        # Join sam file with ref taxo on ref name, and join it to the
-        # component-node file on read name.
-        # Output is (read, metanode, component, taxo) file
-        cmd_line = 'cat ' + sam_filt_filepath + ' | cut -f1,3 | ' + sort_bin + ' -k2,2'
-        cmd_line += ' | join -12 -21 - ' + complete_ref_db_taxo_filepath
-        cmd_line += ' | ' + sort_bin + " -k2,2 | awk '{print $2,$3}' | sed 's/ /\\t/g' "
-        cmd_line += ' | join -11 -21 ' + read_metanode_component_filepath
-        cmd_line += ' - | sed "s/ /\\t/g" > '
-        cmd_line += complete_taxo_filepath
-
-
-        error_code += runner.logged_call(cmd_line, verbose=args.verbose)
-
-        # Compute LCA at component level using quorum threshold
-        cmd_line = 'cat ' + complete_taxo_filepath + ' | ' + sort_bin + ' -k3,3 -k1,1 | '
-        cmd_line += compute_lca_bin + ' -t 4 -f 3 -g 1 -m ' + str(args.quorum)
+        # Compute LCA at component level using quorum threshold. Each read
+        # (mate) is one vote, weighted over its alignments.
+        cmd_line = 'cat ' + complete_taxo_filepath + ' | ' + sort_bin + ' -k4,4 -k1,1 -k2,2n | '
+        cmd_line += compute_lca_bin + ' -t 5 -f 4 -g 1,2 -m ' + str(args.quorum)
         cmd_line += ' -o ' + components_lca_filepath
 
-        error_code += runner.logged_call(cmd_line, verbose=args.verbose)
+        error_code += runner.logged_call(cmd_line, verbose=args.verbose, pipefail=True)
 
         # Output running time
         logger.info('LCA labelling completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
@@ -1289,7 +1316,8 @@ def main():
         t0_wall = time.time()
 
         components_assembly.assemble_all_components(args.assembler,
-                                                    sortme_output_fastq_filepath, read_metanode_component_filepath, components_lca_filepath,
+                                                    sortme_output_forward_filepath, sortme_output_reverse_filepath,
+                                                    read_metanode_component_filepath, components_lca_filepath,
                                                     contigs_filepath, contigs_assembly_wkdir,
                                                     args.cpu, args.read_correction, args.contig_coverage_threshold)
 
@@ -1553,7 +1581,7 @@ def main():
     # Abundance calculation
 
     scaffolds_fasta = large_NR_scaffolds_filepath
-    reads = sortme_output_fastq_filepath
+    reads = (sortme_output_forward_filepath, sortme_output_reverse_filepath)
     fasta_with_abundance_filepath =  '%s.abd%s' % os.path.splitext(scaffolds_fasta)
     abundance = None
 
@@ -1567,10 +1595,11 @@ def main():
         # Set t0
         t0_wall = time.time()
 
-        abundance = get_abundance_by_scaffold(sortmerna_bin, get_best_matches_bin,
-                                              scaffolds_fasta, reads,
+        # Each mate counts as one read (reads are (QNAME, mate), see sam_mates.py)
+        abundance = get_abundance_by_scaffold(sortmerna_bin,
+                                              scaffolds_fasta, *reads,
                                               args.best, args.evalue,
-                                              args.max_memory, args.cpu,
+                                              args.cpu,
                                               output_dir_basepath=workdir,
                                               verbose=args.verbose,
                                               keep_tmp=args.keep_tmp

@@ -10,13 +10,21 @@ compute_abundance = importlib.import_module('compute_abundance')
 sys.path.pop(0)
 
 
-def test_paired_mapping_keeps_complete_pairs_in_fastx_output():
+def test_paired_mapping_keeps_complete_pairs_in_separate_fastx_files():
     """The MarkerMAG-nf filter wrapper relies on this MATAM/SortMeRNA contract."""
     source = (Path(__file__).parent.parent / 'scripts' / 'matam_assembly.py').read_text()
     mapping_stage = source.split("logger.info('=== Reads mapping against ref db ===')", 1)[1]
 
     assert "--reads ' + args.forward + ' --reads ' + args.reverse" in mapping_stage
-    assert "cmd_line += ' --paired_in'" in mapping_stage
+    assert "cmd_line += ' --paired_in --out2'" in mapping_stage
+
+
+def test_selected_pairs_are_published_under_stable_names(tmp_path):
+    """MarkerMAG-nf reads <out_dir>/marker_reads_R1/R2 after --filter_only."""
+    assert matam_assembly.marker_reads_filepath(
+        str(tmp_path), 'R1', '/x/aligned_fwd.fq.gz') == str(tmp_path / 'marker_reads_R1.fq.gz')
+    assert matam_assembly.marker_reads_filepath(
+        str(tmp_path), 'R2', '/x/aligned_rev.fq') == str(tmp_path / 'marker_reads_R2.fq')
 
 
 def test_public_cli_requires_separate_paired_input_files():

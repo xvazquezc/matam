@@ -9,12 +9,20 @@ import subprocess
 logger = logging.getLogger()
 
 
-def logged_call(command, verbose=False):
+def logged_call(command, verbose=False, pipefail=False):
     """
     A logged version of subprocess.call. Do not wait the end of the
-    process to start logging
+    process to start logging.
+
+    With pipefail=True the command runs under bash with ``set -o pipefail``,
+    so a failure anywhere in a shell pipeline is reported, not only a
+    failure of its last command.
     """
     logger.debug('CMD: {0}'.format(command))
+    executable = None
+    if pipefail:
+        command = 'set -o pipefail; ' + command
+        executable = '/bin/bash'
 
     # if true, redirect stderr to stdout, otherwise, to NULL
     if verbose:
@@ -31,7 +39,8 @@ def logged_call(command, verbose=False):
         handler.formatter = logging.Formatter('%(message)s')
         handler.terminator = ''
 
-    with subprocess.Popen(command, stdout=stdout, stderr=stderr, shell=True, bufsize=0) as process:
+    with subprocess.Popen(command, stdout=stdout, stderr=stderr, shell=True, bufsize=0,
+                          executable=executable) as process:
         if verbose:
             while process.poll() is None:
                 message = os.read(process.stdout.fileno(), 1024).decode()
@@ -46,11 +55,11 @@ def logged_call(command, verbose=False):
     return process.wait()
 
 
-def logged_check_call(command, verbose=False):
+def logged_check_call(command, verbose=False, pipefail=False):
     """
     A logged version of subprocess.check_call
     """
-    returncode = logged_call(command, verbose=verbose)
+    returncode = logged_call(command, verbose=verbose, pipefail=pipefail)
     if returncode != 0:
         logger.info('CMD: {0}'.format(command))
         logger.fatal('The last command returns a non-zero return code: %s' % returncode)

@@ -1,56 +1,88 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""Keep each read's best-scoring alignments.
 
-import os
-import sys
+Records are grouped per read, where a read is (QNAME, mate) as set by
+``sam_mates.py``: the two mates of a pair are filtered independently and never
+compete with each other.  Records of one read must be contiguous.  Within a
+read, alignments are ranked by their ``AS:i`` score, and kept until the first
+one that falls below the threshold:
+
+* straight mode: ``threshold * best score``
+* geometric mode: ``threshold * previous score``
+"""
+
 import argparse
 import re
+import sys
 
-if __name__ == '__main__':
+from sam_mates import mate_of
 
-    # Arguments
-    parser = argparse.ArgumentParser(description='')
+SCORE_PATTERN = re.compile(r'\tAS:i:(-?\d+)')
+
+
+def alignment_score(line):
+    match = SCORE_PATTERN.search(line)
+    if match is None:
+        raise ValueError('SAM record has no AS:i score: {!r}'.format(line.strip()))
+    return int(match.group(1))
+
+
+def read_groups(lines):
+    """Yield lists of SAM lines sharing the same (QNAME, mate), header skipped."""
+    key, group = None, []
+    for line in lines:
+        if not line.strip() or line.startswith('@'):
+            continue
+        fields = line.split('\t', 2)
+        current = (fields[0], mate_of(fields[1]))
+        if current != key:
+            if group:
+                yield group
+            key, group = current, []
+        group.append(line if line.endswith('\n') else line + '\n')
+    if group:
+        yield group
+
+
+def filter_group(lines, threshold, geometric=False):
+    """Return the lines of one read to keep, best score first."""
+    ranked = sorted(lines, key=alignment_score, reverse=True)
+    kept = ranked[:1]
+    reference = alignment_score(ranked[0])
+    for line in ranked[1:]:
+        score = alignment_score(line)
+        if score < reference * threshold:
+            break
+        kept.append(line)
+        if geometric:
+            reference = score
+    return kept
+
+
+def filter_alignments(lines, threshold, geometric=False):
+    for group in read_groups(lines):
+        yield from filter_group(group, threshold, geometric)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('-i', '--input_sam', metavar='input.sam',
-                        type=argparse.FileType('r', 0), default='-',
+                        type=argparse.FileType('r'), default='-',
                         help='input sam file')
     parser.add_argument('-o', '--output_sam', metavar='output.sam',
-                        type=argparse.FileType('w', 0), default='-',
+                        type=argparse.FileType('w'), default='-',
                         help='output sam file')
     parser.add_argument('--geometric', action='store_true',
-                        help='Uses an adaptative geometric threshold (straigth treshold by default)')
+                        help='Uses an adaptative geometric threshold (straight threshold by default)')
     parser.add_argument('-t', '--threshold', metavar='PCT',
                         type=float, default=0.9,
-                        help='Threshold will be either threshold*max score (straigth mode) or threshold*previous score (geometric mode)')
-    args = parser.parse_args()
+                        help='Threshold will be either threshold*max score (straight mode) '
+                             'or threshold*previous score (geometric mode)')
+    args = parser.parse_args(argv)
+    args.output_sam.writelines(filter_alignments(args.input_sam, args.threshold, args.geometric))
+    return 0
 
-    #
-    blank = re.compile(r'^\s*$')
-    score_pattern = re.compile(r"\s+AS:i:(\d+)\s+")
-    previous_read_id = ""
-    previous_score = 0
-    threshold = 0.0
-    to_write = True
 
-    for line in args.input_sam:
-        if not blank.match(line):
-            tab = line.split()
-            read_id = tab[0]
-            score = score_pattern.search(line).group(1)
-            if read_id != previous_read_id:
-                to_write = True
-                if not args.geometric:
-                    threshold = float(score) * args.threshold
-            else:
-                if args.geometric:
-                    threshold = float(previous_score) * (args.threshold)
-                if (float(score) < threshold):
-                    to_write = False
-
-            previous_read_id = read_id
-            previous_score = score
-
-            #~ args.output_sam.write('{0}\t{1}\t{2}\t{3}\n'.format(read_id, score, threshold, to_write))
-
-            if to_write:
-                args.output_sam.write("{0}\n".format(line.strip()))
-
+if __name__ == '__main__':
+    sys.exit(main())

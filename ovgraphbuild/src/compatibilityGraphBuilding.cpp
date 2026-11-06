@@ -516,7 +516,9 @@ void writeReadsToCSV(std::ostream &csvNodesFile,
                   << "\n" << "\n" << std::flush;
     }
 
-    csvNodesFile << "Id;Label;Specie" << "\n";
+    // A node is one read: (Label, Mate) is unique. Mate is 1/2 for paired
+    // reads and 0 for unpaired ones. ComponentSearch copies these lines through.
+    csvNodesFile << "Id;Label;Mate;Specie" << "\n";
 
     int64_t i = 0;
 
@@ -526,7 +528,8 @@ void writeReadsToCSV(std::ostream &csvNodesFile,
 
         auto specieID = seqan::prefix(readNames[i], 3);
 
-        csvNodesFile << i << ";" << readBamRecord.qName << ";" << specieID << "\n";
+        csvNodesFile << i << ";" << readBamRecord.qName << ";" << mateOf(readBamRecord)
+                     << ";" << specieID << "\n";
 
         ++i;
     }

@@ -15,6 +15,9 @@
 #include <stdint.h>
 #include <regex>
 #include <typeinfo>
+#include <string>
+#include <algorithm>
+#include <numeric>
 
 #include <seqan/sequence.h>
 #include <seqan/stream.h>
@@ -146,6 +149,43 @@ void readRefNameFromSam(seqan::Map<seqan::Pair<seqan::CharString, int> > &refNam
 }
 
 /***************************************************************************************
+    Exit with an error if the records of one read, (QNAME, mate), were not
+    contiguous in the SAM file and therefore ended up in several nodes.
+
+    The check runs after loading and sorts a single vector of indices, so it
+    adds no per-read allocations among the alignment records (those would
+    scatter the records in memory and slow down the pairwise comparisons).
+***************************************************************************************/
+void exitIfReadsAreSplit(std::vector<std::vector<seqan::BamAlignmentRecord> > const &bamRecordBuffer)
+{
+    auto const sameOrLess = [&bamRecordBuffer](std::size_t i, std::size_t j, bool strictlyLess)
+    {
+        auto const &recordI = bamRecordBuffer[i][0];
+        auto const &recordJ = bamRecordBuffer[j][0];
+        if (recordI.qName != recordJ.qName)
+            return strictlyLess && recordI.qName < recordJ.qName;
+        return strictlyLess ? mateOf(recordI) < mateOf(recordJ)
+                            : mateOf(recordI) == mateOf(recordJ);
+    };
+
+    std::vector<std::size_t> order(bamRecordBuffer.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(),
+              [&sameOrLess](std::size_t i, std::size_t j) { return sameOrLess(i, j, true); });
+
+    for (std::size_t k = 1; k < order.size(); ++k)
+    {
+        if (sameOrLess(order[k - 1], order[k], false))
+        {
+            auto const &record = bamRecordBuffer[order[k]][0];
+            std::cerr << "ERROR: SAM records of read " << record.qName
+                      << " (mate " << mateOf(record) << ") are not contiguous" << "\n";
+            exit(1);
+        }
+    }
+}
+
+/***************************************************************************************
     Read the SAM file and store all BamRecords in a vector
 ***************************************************************************************/
 void readSamFile(seqan::BamHeader &header,
@@ -174,9 +214,15 @@ void readSamFile(seqan::BamHeader &header,
 
     try
     {
-        // Read the bam records
+        // Read the bam records. A read (graph node) is identified by
+        // (QNAME, mate): paired mates may share a QNAME and are told apart by
+        // the 0x40/0x80 flags that MATAM sets after mapping. All records of
+        // one read must be contiguous.
         seqan::BamAlignmentRecord bamRecord;
         seqan::CharString oldQName = "";
+        int oldMate = -1;
+        seqan::CharString bufferQName = "";
+        int bufferMate = -1;
         std::vector<seqan::BamAlignmentRecord> readBamRecordBuffer;
 
         while (!atEnd(bamFileIn))
@@ -189,8 +235,14 @@ void readSamFile(seqan::BamHeader &header,
 //                std::cerr << formatBamRecordString(bamRecord) << "\n";
 //            }
 
-            if (bamRecord.qName != oldQName)
+            int const mate = mateOf(bamRecord);
+
+            if (bamRecord.qName != oldQName || mate != oldMate)
                 ++globalStats.totalReadsNum;
+
+            // Take the key before bamRecord may be moved from below.
+            oldQName = bamRecord.qName;
+            oldMate = mate;
 
             if (hasFlagUnmapped(bamRecord))
             {
@@ -198,7 +250,7 @@ void readSamFile(seqan::BamHeader &header,
             }
             else
             {
-                if (bamRecord.qName != oldQName)
+                if (readBamRecordBuffer.empty() || bamRecord.qName != bufferQName || mate != bufferMate)
                 {
                     ++globalStats.mappedReadsNum;
 
@@ -206,12 +258,12 @@ void readSamFile(seqan::BamHeader &header,
                         bamRecordBuffer.push_back(readBamRecordBuffer);
 
                     readBamRecordBuffer.clear();
+                    bufferQName = bamRecord.qName;
+                    bufferMate = mate;
                 }
 
                 readBamRecordBuffer.push_back(std::move(bamRecord));
             }
-
-            oldQName = bamRecord.qName;
         }
 
         if (!readBamRecordBuffer.empty())
@@ -225,6 +277,8 @@ void readSamFile(seqan::BamHeader &header,
         }
 
         readBamRecordBuffer.clear();
+
+        exitIfReadsAreSplit(bamRecordBuffer);
     }
     catch (seqan::Exception const &e)
     {

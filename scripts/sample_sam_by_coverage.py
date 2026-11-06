@@ -97,7 +97,7 @@ def compute_ref_coverage(ref_sam_tab_list, ref_length):
     """
     """
     # Init ref coverage list
-    ref_coverage_list = np.zeros(ref_length, dtype=np.int)
+    ref_coverage_list = np.zeros(ref_length, dtype=int)
     # Read alignments on the ref
     for alignment_tab in ref_sam_tab_list:
         starting_pos = int(alignment_tab[3]) - 1 #SAM positions are 1-based
@@ -181,8 +181,14 @@ if __name__ == '__main__':
                         default=50,
                         help='Identity threshold. '
                              'Default is %(default)s')
+    # --seed
+    parser.add_argument('--seed',
+                        metavar='INT',
+                        type=int,
+                        help='Seed for the random choice of alignments to remove '
+                             '(default: system randomness)')
     #
     args = parser.parse_args()
     #
-    random.seed()
+    random.seed(args.seed)
     sample_by_depth(args.input_sam, args.references, args.cov_threshold, args.output_sam)

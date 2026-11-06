@@ -11,6 +11,7 @@ import re
 import shlex
 
 from fasta_clean_name import read_fasta_file_handle, format_seq
+from sam_mates import iter_separate_pairs, mate_of, open_text, tag_mates
 
 logger = logging.getLogger(__name__)
 
@@ -32,17 +33,19 @@ def index_ref(sortmerna_bin_path, input_fasta_ref_path, workdir, verbose=False):
     runner.logged_check_call(cmd_line, verbose=verbose)
 
 
-def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, reads_path, output_basepath, best, evalue, cpu, verbose=False):
+def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, forward_path, reverse_path, output_basepath, best, evalue, cpu, verbose=False):
 
     logger.info('--- Reads mapping against scaffolds ---')
     logger.debug('Database:%s' % workdir)
-    parameters = { 'fasta_ref': fasta_ref_path, 'workdir': workdir, 'reads': reads_path, 'output': output_basepath,
+    reads = '{} --reads {}'.format(shlex.quote(forward_path), shlex.quote(reverse_path))
+    parameters = { 'fasta_ref': fasta_ref_path, 'workdir': workdir, 'reads': reads, 'output': output_basepath,
                    'best': best, 'evalue': evalue, 'cpu': cpu }
 
-    # Only BLAST output is consumed for abundance; do not create unused FASTQ
-    # or SAM reports.  Keep the remaining potentially large report compressed.
+    # Only the SAM output is consumed: its SEQ field lets sam_mates.py tell
+    # the mates of a pair apart (BLAST tabular output cannot). Do not create
+    # unused FASTQ or BLAST reports; keep the SAM compressed.
     cmd_line = '{bin} --ref {fasta_ref} --workdir {workdir} --reads {reads} --aligned {output}' \
-               ' --blast 1 --zip-out true' \
+               ' --sam --zip-out true' \
                ' --num_alignments {best} -e {evalue:.2e} --threads {cpu}'.format(bin=sortmerna_bin, **parameters)
     if verbose:
         cmd_line += ' -v'
@@ -50,41 +53,55 @@ def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, reads_path, output_bas
     runner.logged_check_call(cmd_line, verbose=verbose)
 
 
-def get_best_matches(best_matches_bin, input_blast_path, out_blast_path, max_mem, cpu):
+def best_alignments_by_mate(tagged_sam_lines, threshold=0.99):
+    """Yield ((read, mate), scaffold) for each read's best alignments.
 
-    outdir = os.path.dirname(out_blast_path)
+    Records must be grouped per read, as sam_mates.tag_mates writes them.
+    An alignment is kept when its AS score is >= threshold * the read's best
+    score (0.99 tolerates the few nucleotides SortMeRNA soft-clips at ends).
+    """
+    def flush(key, group):
+        best = max(score for score, _ in group)
+        for score, scaffold in group:
+            if score >= best * threshold:
+                yield key, scaffold
 
-    sort_bin = 'sort -T ' + outdir + ' -S ' + str(max_mem)
-    sort_bin += 'M --parallel ' + str(cpu)
+    key, group = None, []
+    for line in tagged_sam_lines:
+        if not line.strip() or line.startswith('@'):
+            continue
+        fields = line.rstrip('\n').split('\t')
+        current = (fields[0], mate_of(fields[1]))
+        score = re.search(r'\tAS:i:(-?\d+)', line)
+        if score is None:
+            raise ValueError('SAM record has no AS:i score: {!r}'.format(line.strip()))
+        if current != key:
+            if group:
+                yield from flush(key, group)
+            key, group = current, []
+        group.append((int(score.group(1)), fields[2]))
+    if group:
+        yield from flush(key, group)
 
-    cmd_line = stream_file_command(input_blast_path)
-    cmd_line += ' | ' + sort_bin + ' -k1,1V -k12,12nr'
-    cmd_line += ' | ' + best_matches_bin + ' -p 0.99 -o ' + out_blast_path
 
-    runner.logged_check_call(cmd_line)
+def abundance_from_assignments(assignments):
+    """Compute scaffold abundances from (read, scaffold) assignments.
 
-
-def abundance_calculation(blast_path):
+    A read is any hashable key; in MATAM it is (QNAME, mate), so each mate of
+    a pair counts as one read. A read hitting n distinct scaffolds adds 1/n to
+    each of them; hitting the same scaffold several times counts once.
+    """
     scaffolds_by_read = collections.defaultdict(list)
     reads_by_scaffold = collections.defaultdict(list)
-
-    with open(blast_path, 'r') as f:
-        for line in f:
-            if line.strip() == '': continue
-            read, scaffold = [ s.strip() for s in line.split('\t')[:2] ]
-            scaffolds_by_read[read].append(scaffold)
-            reads_by_scaffold[scaffold].append(read)
+    for read, scaffold in assignments:
+        scaffolds_by_read[read].append(scaffold)
+        reads_by_scaffold[scaffold].append(read)
 
     #asign a weight for each read
     read_weight = {}
     for read, scaffolds in scaffolds_by_read.items():
         uniq_scaffolds = set(scaffolds)
-        if len(uniq_scaffolds) == 0:
-            weight = 0
-        elif len(uniq_scaffolds) == 1:
-            weight = 1
-        else:
-            weight = 1/len(uniq_scaffolds)
+        weight = 1 / len(uniq_scaffolds)
         read_weight[read] = weight
 
         if len(scaffolds) != len(uniq_scaffolds):
@@ -103,14 +120,28 @@ to the abundance of this scaffold only as 1 weight where weight=1/uniq_scaffolds
     return abundance_by_scaffold
 
 
-def get_abundance_by_scaffold(sortmerna_bin, best_bin,
-                              input_fasta_ref, input_fastq_reads,
+def abundance_calculation(blast_path):
+    """Abundance from a BLAST tabular file of best matches (read in column 1)."""
+    def assignments():
+        with open(blast_path, 'r') as f:
+            for line in f:
+                if line.strip() == '': continue
+                read, scaffold = [ s.strip() for s in line.split('\t')[:2] ]
+                yield read, scaffold
+    return abundance_from_assignments(assignments())
+
+
+def get_abundance_by_scaffold(sortmerna_bin,
+                              input_fasta_ref, forward_fastq, reverse_fastq,
                               best=10, evalue=1e-05,
-                              max_mem=10000, cpu=4,
+                              cpu=4,
                               output_dir_basepath="/tmp/",
                               verbose=False,
                               keep_tmp=False):
+    """Map the paired reads (R1/R2 files) on the scaffolds and count each mate.
 
+    The same files are used to tell the mates apart in the SAM output.
+    """
     output_dir_basepath = os.path.join(output_dir_basepath , '') # add a trailing slash
     outdir = tempfile.mkdtemp(dir=output_dir_basepath, prefix='abundance_')
 
@@ -121,15 +152,13 @@ def get_abundance_by_scaffold(sortmerna_bin, best_bin,
 
     #reads mapping
     filtered_basepath = os.path.join(outdir, 'filt_prefix')
-    reads_mapping(sortmerna_bin, input_fasta_ref, smr_workdir, input_fastq_reads, filtered_basepath, best, evalue, cpu, verbose=verbose)
+    reads_mapping(sortmerna_bin, input_fasta_ref, smr_workdir, forward_fastq, reverse_fastq, filtered_basepath, best, evalue, cpu, verbose=verbose)
 
-    #best matches
-    blast_path = '%s.blast.gz' % filtered_basepath
-    best_path = '%s.best' % blast_path
-    get_best_matches(best_bin, blast_path, best_path, max_mem, cpu)
-
-    #abundance calculation
-    abundance = abundance_calculation(best_path)
+    #best matches per (read, mate), then abundance
+    sam_path = '%s.sam.gz' % filtered_basepath
+    with open_text(sam_path) as sam:
+        tagged = tag_mates(sam, iter_separate_pairs(forward_fastq, reverse_fastq))
+        abundance = abundance_from_assignments(best_alignments_by_mate(tagged, 0.99))
 
     #delete tempfiles
     if not keep_tmp:

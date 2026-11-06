@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPTS_DIR = Path(__file__).parent.parent / 'scripts'
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -19,45 +21,67 @@ def read_fastq_ids(path):
         return [line[1:].strip() for line in input_handle if line.startswith('@')]
 
 
-def test_component_extraction_keeps_only_complete_same_component_pairs(tmp_path):
-    selected_reads = tmp_path / 'selected.fastq'
+def extract(tmp_path, forward_ids, reverse_ids, table):
+    forward, reverse = tmp_path / 'reads_R1.fastq', tmp_path / 'reads_R2.fastq'
+    write_fastq(forward, forward_ids)
+    write_fastq(reverse, reverse_ids)
     components = tmp_path / 'read_component.tab'
-    output_dir = tmp_path / 'components'
-    write_fastq(selected_reads, ['forward-1', 'reverse-1',
-                                 'forward-2', 'reverse-2'])
-    components.write_text(
-        'forward-1 meta component-A\n'
-        'reverse-1 meta component-A\n'
-        'forward-2 meta component-A\n'
-        'reverse-2 meta component-B\n')
+    components.write_text(table)  # read  mate  metanode  component
+    return components_assembly.extract_separate_paired_reads_by_component(
+        str(forward), str(reverse), str(components))
 
-    pairs = components_assembly.extract_interleaved_paired_reads_by_component(
-        str(selected_reads), str(components))
-    files = components_assembly.save_components(pairs, str(output_dir))
+
+def test_component_extraction_keeps_only_complete_same_component_pairs(tmp_path):
+    pairs = extract(tmp_path, ['pair-1/1', 'pair-2/1'], ['pair-1/2', 'pair-2/2'],
+                    'pair-1/1\t1\tmeta\tcomponent-A\n'
+                    'pair-1/2\t2\tmeta\tcomponent-A\n'
+                    'pair-2/1\t1\tmeta\tcomponent-A\n'
+                    'pair-2/2\t2\tmeta\tcomponent-B\n')
+    files = components_assembly.save_components(pairs, str(tmp_path / 'components'))
 
     assert list(files) == ['component-A']
     forward, reverse = files['component-A']
-    assert read_fastq_ids(forward) == ['forward-1']
-    assert read_fastq_ids(reverse) == ['reverse-1']
+    assert read_fastq_ids(forward) == ['pair-1/1']
+    assert read_fastq_ids(reverse) == ['pair-1/2']
 
 
-def test_separate_component_input_uses_pair_positions_and_requires_both_mates(tmp_path):
-    forward_reads = tmp_path / 'reads_R1.fastq'
-    reverse_reads = tmp_path / 'reads_R2.fastq'
-    components = tmp_path / 'read_component.tab'
-    write_fastq(forward_reads, ['forward-1', 'forward-2'])
-    write_fastq(reverse_reads, ['reverse-1', 'reverse-2'])
-    components.write_text(
-        'forward-1 meta component-A\n'
-        'reverse-1 meta component-A\n'
-        'forward-2 meta component-A\n')
+def test_casava_mates_sharing_an_id_are_looked_up_by_mate(tmp_path):
+    # CASAVA naming: both mates have the same ID (the comment is not part of it).
+    ids = ['M01:1:FC:1:1:1:1', 'M01:1:FC:1:1:1:2']
+    pairs = extract(tmp_path,
+                    [i + ' 1:N:0:ACGT' for i in ids], [i + ' 2:N:0:ACGT' for i in ids],
+                    'M01:1:FC:1:1:1:1\t1\tm0\tA\n'
+                    'M01:1:FC:1:1:1:1\t2\tm1\tA\n'   # pair 1: both mates in A -> kept
+                    'M01:1:FC:1:1:1:2\t1\tm0\tA\n'
+                    'M01:1:FC:1:1:1:2\t2\tm2\tB\n')  # pair 2: split across A/B -> discarded
 
-    pairs = components_assembly.extract_separate_paired_reads_by_component(
-        str(forward_reads), str(reverse_reads), str(components))
+    assert list(pairs) == ['A']
+    assert [record[0] for record in pairs['A'][0]] == ['M01:1:FC:1:1:1:1']
+    assert [record[0] for record in pairs['A'][1]] == ['M01:1:FC:1:1:1:1']
+
+
+def test_a_pair_needs_both_mates_in_a_component(tmp_path):
+    pairs = extract(tmp_path, ['pair-1', 'pair-2'], ['pair-1', 'pair-2'],
+                    'pair-1\t1\tmeta\tcomponent-A\n'
+                    'pair-1\t2\tmeta\tcomponent-A\n'
+                    'pair-2\t1\tmeta\tcomponent-A\n')
 
     assert list(pairs) == ['component-A']
-    assert [record[0] for record in pairs['component-A'][0]] == ['forward-1']
-    assert [record[0] for record in pairs['component-A'][1]] == ['reverse-1']
+    assert [record[0] for record in pairs['component-A'][0]] == ['pair-1']
+    assert [record[0] for record in pairs['component-A'][1]] == ['pair-1']
+
+
+@pytest.mark.parametrize('forward_ids, reverse_ids', [
+    (['pair-1', 'pair-2'], ['pair-1', 'pair-3']),   # mates out of sync
+    (['pair-1', 'pair-2'], ['pair-1']),             # different record counts
+])
+def test_inconsistent_pair_files_are_a_fatal_error(tmp_path, forward_ids, reverse_ids):
+    with pytest.raises(SystemExit):
+        extract(tmp_path, forward_ids, reverse_ids, 'pair-1\t1\tm\tA\npair-1\t2\tm\tA\n')
+
+
+def test_empty_selection_gives_no_components(tmp_path):
+    assert dict(extract(tmp_path, [], [], '')) == {}
 
 
 def test_component_without_lca_is_labelled_null(tmp_path):

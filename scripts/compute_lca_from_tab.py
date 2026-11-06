@@ -37,34 +37,52 @@ def read_fasta_file_handle(fasta_file_handle):
 
 def read_tab_file_handle_sorted(tab_file_handle, factor_index, group_by_index, sep):
     """
-    Parse a tab file (sorted by a column) and return a generator
+    Parse a tab file sorted by factor, then by group, and yield one list per
+    factor. Each list holds one list of rows per group.
+
+    group_by_index is a column index or a list of column indices; with several
+    columns a group is identified by all of them (e.g. read and mate).
+    Empty input yields nothing.
     """
-    previous_factor_id = ''
-    previous_group_by_id = ''
+    if isinstance(group_by_index, int):
+        group_by_index = [group_by_index]
+    previous_factor = None
+    previous_group = None
     factor_tab_list = list()
     group_by_tab_list = list()
-    # Reading tab file
     for tab in (l.strip().split(sep) for l in tab_file_handle if l.strip()):
         current_factor = tab[factor_index]
-        current_group_by = tab[group_by_index]
-        # Group by
-        if current_group_by != previous_group_by_id:
-            if previous_group_by_id:
+        current_group = tuple(tab[i] for i in group_by_index)
+        if current_factor != previous_factor:
+            # A new factor always closes the current group, even when the
+            # same group id continues into it.
+            if group_by_tab_list:
                 factor_tab_list.append(group_by_tab_list)
-                group_by_tab_list = list()
-        # Yield the previous factor tab list
-        if current_factor != previous_factor_id:
-            if previous_factor_id:
+            if factor_tab_list:
                 yield factor_tab_list
-                factor_tab_list = list()
+            factor_tab_list, group_by_tab_list = list(), list()
+        elif current_group != previous_group:
+            factor_tab_list.append(group_by_tab_list)
+            group_by_tab_list = list()
         group_by_tab_list.append(tab)
-        previous_factor_id = current_factor
-        previous_group_by_id = current_group_by
-    # Yield the last tab list
-    factor_tab_list.append(group_by_tab_list)
-    yield factor_tab_list
-    # Close tab file
+        previous_factor = current_factor
+        previous_group = current_group
+    if group_by_tab_list:
+        factor_tab_list.append(group_by_tab_list)
+    if factor_tab_list:
+        yield factor_tab_list
     tab_file_handle.close()
+
+
+def parse_columns(value):
+    """Parse a 1-based column number or comma-separated list into 0-based indices."""
+    try:
+        columns = [int(v) - 1 for v in value.split(',')]
+    except ValueError:
+        raise argparse.ArgumentTypeError('expected column numbers, e.g. 1 or 1,2: {!r}'.format(value))
+    if any(c < 0 for c in columns):
+        raise argparse.ArgumentTypeError('column numbers start at 1: {!r}'.format(value))
+    return columns
 
 
 def compute_lca(factor_taxo_list, min_proportion):
@@ -120,9 +138,10 @@ if __name__ == '__main__':
     parser.add_argument('-f', '--factor', metavar='INT',
                         type=int, required=True,
                         help='Column number of the factor to compute the LCA for (eg. node or contig)')
-    parser.add_argument('-g', '--group_by', metavar='INT',
-                        type=int, required=True,
-                        help='Column number on wich to group by (eg. reads). Taxo are weighted')
+    parser.add_argument('-g', '--group_by', metavar='INT[,INT...]',
+                        type=parse_columns, required=True,
+                        help='Column number(s) on which to group by (eg. reads, or read and mate '
+                             'columns "1,2"). Taxo are weighted')
     parser.add_argument('-m', '--min_proportion', metavar='FLOAT',
                         type=float, default=1.0,
                         help='Find the most recent LCA covered by at least min_proportion '
@@ -144,7 +163,7 @@ if __name__ == '__main__':
     # to get indices from column numbers
     args.taxo -= 1
     args.factor -= 1
-    args.group_by -= 1
+    # args.group_by is already a list of 0-based indices (parse_columns)
 
     # Deals with headers
     if args.header:

@@ -114,10 +114,27 @@ MATAM accepts paired reads only. Supply forward and reverse FastQ files with
 `--forward` and `--reverse`; single-end and pre-interleaved input are not
 supported.
 
+Paired reads stay in separate R1/R2 files throughout. The read pairs selected by
+the mapping step (pairs with at least one mate matching the database, both mates
+kept) are written to the output directory as `marker_reads_R1.fq.gz` and
+`marker_reads_R2.fq.gz`, with the original read names, in step. With
+`--filter_only`, MATAM stops after this step, so these two files are its output.
+
 ## <a id="input-data"></a>3.1 Input data
 
-The reads used to reconstruct the markers must be provided under FASTQ format.  
-Be aware than the **the sequence identifiers have to be unique** and the **the score must be Phred+33 encoded**.
+The reads used to reconstruct the markers must be provided under FASTQ format (plain or gzipped),
+with **Phred+33 encoded** quality scores.
+
+The two files must list the mates of each pair in the same order. **Read identifiers must be
+unique per pair**, and both naming conventions are supported as is, so there is no need to rename your reads:
+
+- identical identifiers for both mates, as written by Illumina (`@ID 1:N:0:...` / `@ID 2:N:0:...`) or by SRA dumps (`@ID` / `@ID`);
+- legacy mate suffixes (`@ID/1` / `@ID/2`).
+
+MATAM works on mates: after the read mapping it records which mate each alignment comes from
+(standard SAM flags 0x40/0x80), so the two mates of a pair are filtered, placed in the overlap
+graph (one node per mate), and counted for abundance as two distinct reads, whatever their
+naming. The results do not depend on the naming convention.
 
 ## <a id="database-preparation"></a>3.2 Database preparation (clustering & indexation)
 
