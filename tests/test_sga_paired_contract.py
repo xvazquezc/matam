@@ -60,6 +60,24 @@ def test_separate_component_input_uses_pair_positions_and_requires_both_mates(tm
     assert [record[0] for record in pairs['component-A'][1]] == ['reverse-1']
 
 
+def test_component_without_lca_is_labelled_null(tmp_path):
+    # Component 2 follows a labelled component, so a stale LCA would leak into it.
+    component_1 = tmp_path / 'component1.fa'
+    component_2 = tmp_path / 'component2.fa'
+    contigs = tmp_path / 'contigs.fa'
+    component_1.write_text('>contig-0\nACGT\n>contig-1\n\n')
+    component_2.write_text('>contig-0\nGGGG\n')
+
+    components_assembly.concat_components_fasta_with_lca(
+        {'1': str(component_1), '2': str(component_2)},
+        str(contigs),
+        {'1': 'Bacteria;Firmicutes'})
+
+    assert contigs.read_text() == (
+        '>1 component=1 lca=Bacteria;Firmicutes\nACGT\n'
+        '>2 component=2 lca=NULL\nGGGG\n')
+
+
 def test_sga_driver_accepts_only_separate_paired_files():
     source = (SCRIPTS_DIR / 'sga_assemble.py').read_text()
 

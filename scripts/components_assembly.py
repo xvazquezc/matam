@@ -285,12 +285,10 @@ def concat_components_fasta_with_lca(assembled_components_fasta, contigs_fasta, 
         #logger.debug("Remove old contig fasta file:%s" % contigs_fasta)
         os.unlink(contigs_fasta)
 
-    component_lca = 'NULL'
     contigs_fh = open(contigs_fasta, 'w')
     contig_count = 0
     for component_id, component_fasta in assembled_components_fasta.items():
-        if component_id in component_lca_dict:
-            component_lca = component_lca_dict[component_id]
+        component_lca = component_lca_dict.get(component_id, 'NULL')
         with open(component_fasta, 'r') as assembler_contigs_fh:
             for header, seq in read_fasta_file_handle(assembler_contigs_fh):
                 if len(seq):
