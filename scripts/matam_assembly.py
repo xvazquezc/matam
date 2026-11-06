@@ -10,6 +10,7 @@ import time
 import logging
 import cProfile
 import gzip
+import shlex
 from collections import defaultdict
 import shutil
 
@@ -35,6 +36,37 @@ def fastq_line_count(filepath):
     opener = gzip.open if filepath.endswith('.gz') else open
     with opener(filepath, 'rt') as fastq_fh:
         return sum(1 for _ in fastq_fh)
+
+
+def find_sortmerna_output(basepath, extensions):
+    """Return the one SortMeRNA output matching a prefix and file type.
+
+    SortMeRNA 7 writes ``.fq`` for FASTQ output regardless of whether the
+    input was named ``.fq`` or ``.fastq``.  ``--zip-out`` additionally appends
+    ``.gz`` to all report files.  Do not infer the output name from the input
+    name: discover the generated file instead.
+    """
+    candidates = [
+        basepath + extension + compression
+        for extension in extensions
+        for compression in ('', '.gz')
+    ]
+    found = [candidate for candidate in candidates if os.path.isfile(candidate)]
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise FileNotFoundError(
+            'SortMeRNA did not produce an expected output: {}'.format(
+                ', '.join(candidates)))
+    raise RuntimeError(
+        'SortMeRNA produced ambiguous outputs for {}: {}'.format(
+            basepath, ', '.join(found)))
+
+
+def stream_file_command(filepath):
+    """Return a shell command that streams either a plain or gzip file."""
+    quoted_path = shlex.quote(filepath)
+    return 'gzip -cd ' + quoted_path if filepath.endswith('.gz') else 'cat ' + quoted_path
 
 logging_config = dict(
     version = 1,
@@ -776,8 +808,8 @@ def main():
     sortme_output_basename += '_b' + str(args.best) + '_m' + str(args.min_lis)
     sortme_output_basepath = os.path.join(workdir, sortme_output_basename)
 
-    sortme_output_fastq_filepath = sortme_output_basepath + input_fastq_extension
-    sortme_output_sam_filepath = sortme_output_basepath + '.sam'
+    sortme_output_fastq_filepath = None
+    sortme_output_sam_filepath = None
 
     # Alignments filtering
     score_threshold_int = int(args.score_threshold * 100)
@@ -998,6 +1030,7 @@ def main():
         cmd_line += ' --paired_in'
         cmd_line += ' --aligned ' + sortme_output_basepath
         cmd_line += ' --fastx --sam --blast 1'
+        cmd_line += ' --zip-out true'
         cmd_line += ' --num_alignments ' + str(args.best)
         cmd_line += ' -e {0:.2e}'.format(args.evalue)
         cmd_line += ' --threads ' + str(args.cpu)
@@ -1012,19 +1045,26 @@ def main():
         # Output running time
         logger.info('Reads mapping completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
 
+    sortme_output_fastq_filepath = find_sortmerna_output(
+        sortme_output_basepath, ('.fq', '.fastq'))
+    sortme_output_sam_filepath = find_sortmerna_output(
+        sortme_output_basepath, ('.sam',))
+
     # Get selected reads number
     selected_reads_nb = -1
 
     if args.verbose:
         if input_fastq_extension in ('.fq', '.fastq'):
-            selected_fastq_line_nb = int(subprocess.check_output('wc -l {0}'.format(sortme_output_fastq_filepath), shell=True, bufsize=0).split()[0])
+            selected_fastq_line_nb = fastq_line_count(sortme_output_fastq_filepath)
             selected_reads_nb = selected_fastq_line_nb // 4
 
         logger.info('Identified as marker: {} / {} reads ({:.2f}%)'.format(selected_reads_nb, input_reads_nb, selected_reads_nb*100.0/input_reads_nb))
 
     # Tag tmp files for removal
-    to_rm_filepath_list.append(sortme_output_basepath + '.log')
-    to_rm_filepath_list.append(sortme_output_basepath + '.blast')
+    for extension in ('.log', '.blast', '.blast.gz'):
+        output_filepath = sortme_output_basepath + extension
+        if os.path.isfile(output_filepath):
+            to_rm_filepath_list.append(output_filepath)
 
     if args.filter_only:
         return error_code
@@ -1038,7 +1078,7 @@ def main():
     if run_step:
         logger.info('=== Alignment filtering ===')
 
-        cmd_line = 'cat ' + sortme_output_sam_filepath
+        cmd_line = stream_file_command(sortme_output_sam_filepath)
         cmd_line += ' | grep -v "^@" | '
         cmd_line += sort_bin + ' -k 1,1V -k 12,12Vr'
         cmd_line += ' | ' + filter_score_bin + ' -t ' + str(args.score_threshold)

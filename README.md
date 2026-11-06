@@ -157,6 +157,10 @@ When your database is ready, then you will be able to reconstruct your markers:
 
 SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes remain under the database `.smr/idx` directories.
 
+MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
+temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
+FASTQ naming, with or without a `.gz` suffix.
+
 where `$DBDIR` is the database directory and `prefix` is the common prefix used to name the database files.
 For example, with the default database, the prefix is SILVA_128_SSURef_NR95.  
 

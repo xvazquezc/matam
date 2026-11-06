@@ -8,10 +8,17 @@ import collections
 import tempfile
 import shutil
 import re
+import shlex
 
 from fasta_clean_name import read_fasta_file_handle, format_seq
 
 logger = logging.getLogger(__name__)
+
+
+def stream_file_command(filepath):
+    """Return a shell command that streams either a plain or gzip file."""
+    quoted_path = shlex.quote(filepath)
+    return 'gzip -cd ' + quoted_path if filepath.endswith('.gz') else 'cat ' + quoted_path
 
 def index_ref(sortmerna_bin_path, input_fasta_ref_path, workdir, verbose=False):
     logger.info('--- Indexing scaffolds ---')
@@ -32,8 +39,10 @@ def reads_mapping(sortmerna_bin, fasta_ref_path, workdir, reads_path, output_bas
     parameters = { 'fasta_ref': fasta_ref_path, 'workdir': workdir, 'reads': reads_path, 'output': output_basepath,
                    'best': best, 'evalue': evalue, 'cpu': cpu }
 
+    # Only BLAST output is consumed for abundance; do not create unused FASTQ
+    # or SAM reports.  Keep the remaining potentially large report compressed.
     cmd_line = '{bin} --ref {fasta_ref} --workdir {workdir} --reads {reads} --aligned {output}' \
-               ' --fastx --sam --blast 1' \
+               ' --blast 1 --zip-out true' \
                ' --num_alignments {best} -e {evalue:.2e} --threads {cpu}'.format(bin=sortmerna_bin, **parameters)
     if verbose:
         cmd_line += ' -v'
@@ -48,7 +57,8 @@ def get_best_matches(best_matches_bin, input_blast_path, out_blast_path, max_mem
     sort_bin = 'sort -T ' + outdir + ' -S ' + str(max_mem)
     sort_bin += 'M --parallel ' + str(cpu)
 
-    cmd_line = sort_bin + ' -k1,1V -k12,12nr ' + input_blast_path
+    cmd_line = stream_file_command(input_blast_path)
+    cmd_line += ' | ' + sort_bin + ' -k1,1V -k12,12nr'
     cmd_line += ' | ' + best_matches_bin + ' -p 0.99 -o ' + out_blast_path
 
     runner.logged_check_call(cmd_line)
@@ -114,7 +124,7 @@ def get_abundance_by_scaffold(sortmerna_bin, best_bin,
     reads_mapping(sortmerna_bin, input_fasta_ref, smr_workdir, input_fastq_reads, filtered_basepath, best, evalue, cpu, verbose=verbose)
 
     #best matches
-    blast_path = '%s.blast' % filtered_basepath
+    blast_path = '%s.blast.gz' % filtered_basepath
     best_path = '%s.best' % blast_path
     get_best_matches(best_bin, blast_path, best_path, max_mem, cpu)
 
