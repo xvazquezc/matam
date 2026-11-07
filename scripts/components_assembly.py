@@ -60,37 +60,52 @@ def _load_read_components(read_metanode_component_filepath):
 
 
 def _split_pairs_by_component(pairs, read_component_dict):
-    """Keep complete pairs whose two mates belong to one component.
+    """Send each read pair to every component that holds one of its mates.
 
     Reads are looked up by (read ID, mate), so mates sharing an ID (CASAVA
-    naming) are distinct reads. A pair whose mates are in different components,
-    or with a mate outside every component, is discarded.
+    naming) are distinct reads.
+
+    A component covers only a short stretch of a gene (often not much longer
+    than a sequenced fragment), so the two mates of a pair often fall into
+    adjacent components. Both mates come from one molecule, so the partner
+    mate is genuine continuation of the component's sequence: the complete
+    pair goes to both components, which lets each assembly reach across the
+    boundary. Components are never merged: mate links run through
+    conserved, multi-species components and would chain species together.
+    A pair with only one mate in a component goes to that component; a pair
+    with no mate in any component is not assembled.
     """
     component_reads_dict = defaultdict(lambda: ([], []))
-    kept_pairs = 0
-    discarded_pairs = 0
+    within = spanning = one_mate = unassigned = 0
     for forward_read, reverse_read in pairs:
         if pair_core_id(forward_read[0]) != pair_core_id(reverse_read[0]):
             logger.fatal('Mates are out of sync: %s vs %s', forward_read[0], reverse_read[0])
             sys.exit("An error occured. Can't extract component's reads")
         forward_component = read_component_dict.get((forward_read[0], 1))
         reverse_component = read_component_dict.get((reverse_read[0], 2))
-        if forward_component is not None and forward_component == reverse_component:
-            component_reads_dict[forward_component][0].append(forward_read)
-            component_reads_dict[forward_component][1].append(reverse_read)
-            kept_pairs += 1
+        components = [c for c in (forward_component, reverse_component) if c is not None]
+        if not components:
+            unassigned += 1
+            continue
+        if len(components) == 1:
+            one_mate += 1
+        elif forward_component == reverse_component:
+            within += 1
+            components = components[:1]
         else:
-            # A pair with an unselected mate or mates in distinct graph
-            # components cannot preserve the original component semantics.
-            discarded_pairs += 1
-    logger.info('Kept %s complete same-component read pairs; discarded %s',
-                kept_pairs, discarded_pairs)
+            spanning += 1
+        for component in components:
+            component_reads_dict[component][0].append(forward_read)
+            component_reads_dict[component][1].append(reverse_read)
+    logger.info('Read pairs by component: %s within one component, %s spanning two '
+                '(given to both), %s with one mate in a component, %s in no component '
+                '(not assembled)', within, spanning, one_mate, unassigned)
     return component_reads_dict
 
 
 def extract_separate_paired_reads_by_component(forward_fastq, reverse_fastq,
                                                 read_metanode_component_filepath):
-    """Keep complete, same-component pairs from separate R1/R2 files."""
+    """Group the read pairs of separate R1/R2 files by component (see _split_pairs_by_component)."""
     for fastq in (forward_fastq, reverse_fastq):
         if not os.path.isfile(fastq):
             logger.fatal('The input reads file does not exists:%s' % fastq)

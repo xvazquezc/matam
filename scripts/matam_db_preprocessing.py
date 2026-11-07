@@ -368,7 +368,11 @@ if __name__ == '__main__':
     # Sort sequences by decreasing length
     logger.info('Cleaning reference db')
 
+    # Headers: turn tabs (and other whitespace runs) into single spaces.
+    # SortMeRNA takes the reference name up to the first space only, so a tab
+    # would end up inside the SAM RNAME and shift every following column.
     cmd_line = 'cat ' + complete_ref_db_filepath
+    cmd_line += ' | sed -e "/^>/s/[[:space:]]\\+/ /g" -e "/^>/s/ $//"'
     cmd_line += ' | sed "/^>/!s/U/T/g" | sed "/^>/!s/u/t/g" | sed "/^>/!s/ //g"'
     cmd_line += ' | ' + replace_Ns_bin + ' -n {0} '.format(args.max_consecutive_n)
     if args.min_length or args.max_length:

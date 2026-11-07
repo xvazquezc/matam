@@ -49,8 +49,8 @@ def iter_read_bases(read_bases):
         elif character in frozenset('.,$ACGTNacgtn*><'):
             read_base = character
         else:
-            print(read_bases)
-            raise ParsingError('Character is not recognized')
+            raise ValueError('Unrecognised mpileup read base {!r} at index {} of {!r}'.format(
+                character, i, read_bases))
 
         yield read_base
         i += 1

@@ -31,7 +31,7 @@ def extract(tmp_path, forward_ids, reverse_ids, table):
         str(forward), str(reverse), str(components))
 
 
-def test_component_extraction_keeps_only_complete_same_component_pairs(tmp_path):
+def test_a_pair_spanning_two_components_goes_to_both(tmp_path):
     pairs = extract(tmp_path, ['pair-1/1', 'pair-2/1'], ['pair-1/2', 'pair-2/2'],
                     'pair-1/1\t1\tmeta\tcomponent-A\n'
                     'pair-1/2\t2\tmeta\tcomponent-A\n'
@@ -39,10 +39,23 @@ def test_component_extraction_keeps_only_complete_same_component_pairs(tmp_path)
                     'pair-2/2\t2\tmeta\tcomponent-B\n')
     files = components_assembly.save_components(pairs, str(tmp_path / 'components'))
 
-    assert list(files) == ['component-A']
+    assert sorted(files) == ['component-A', 'component-B']
     forward, reverse = files['component-A']
-    assert read_fastq_ids(forward) == ['pair-1/1']
-    assert read_fastq_ids(reverse) == ['pair-1/2']
+    assert read_fastq_ids(forward) == ['pair-1/1', 'pair-2/1']
+    assert read_fastq_ids(reverse) == ['pair-1/2', 'pair-2/2']
+    forward, reverse = files['component-B']
+    assert read_fastq_ids(forward) == ['pair-2/1']
+    assert read_fastq_ids(reverse) == ['pair-2/2']
+
+
+def test_pair_routing_is_logged(tmp_path, caplog):
+    caplog.set_level('INFO')
+    extract(tmp_path, ['p1', 'p2', 'p3', 'p4'], ['p1', 'p2', 'p3', 'p4'],
+            'p1\t1\tm\tA\np1\t2\tm\tA\n'   # within A
+            'p2\t1\tm\tA\np2\t2\tm\tB\n'   # spanning A/B
+            'p3\t2\tm\tB\n')                  # one mate in B; p4 in no component
+    assert ('Read pairs by component: 1 within one component, 1 spanning two (given to both), '
+            '1 with one mate in a component, 1 in no component (not assembled)') in caplog.text
 
 
 def test_casava_mates_sharing_an_id_are_looked_up_by_mate(tmp_path):
@@ -53,22 +66,23 @@ def test_casava_mates_sharing_an_id_are_looked_up_by_mate(tmp_path):
                     'M01:1:FC:1:1:1:1\t1\tm0\tA\n'
                     'M01:1:FC:1:1:1:1\t2\tm1\tA\n'   # pair 1: both mates in A -> kept
                     'M01:1:FC:1:1:1:2\t1\tm0\tA\n'
-                    'M01:1:FC:1:1:1:2\t2\tm2\tB\n')  # pair 2: split across A/B -> discarded
+                    'M01:1:FC:1:1:1:2\t2\tm2\tB\n')  # pair 2: split across A/B -> both
 
-    assert list(pairs) == ['A']
-    assert [record[0] for record in pairs['A'][0]] == ['M01:1:FC:1:1:1:1']
-    assert [record[0] for record in pairs['A'][1]] == ['M01:1:FC:1:1:1:1']
+    assert sorted(pairs) == ['A', 'B']
+    assert [record[0] for record in pairs['A'][0]] == ids
+    assert [record[0] for record in pairs['A'][1]] == ids
+    assert [record[0] for record in pairs['B'][1]] == ['M01:1:FC:1:1:1:2']
 
 
-def test_a_pair_needs_both_mates_in_a_component(tmp_path):
-    pairs = extract(tmp_path, ['pair-1', 'pair-2'], ['pair-1', 'pair-2'],
+def test_a_pair_with_one_mate_in_a_component_goes_to_that_component(tmp_path):
+    pairs = extract(tmp_path, ['pair-1', 'pair-2', 'pair-3'], ['pair-1', 'pair-2', 'pair-3'],
                     'pair-1\t1\tmeta\tcomponent-A\n'
                     'pair-1\t2\tmeta\tcomponent-A\n'
-                    'pair-2\t1\tmeta\tcomponent-A\n')
+                    'pair-2\t1\tmeta\tcomponent-A\n')   # pair-3: no mate in a component
 
     assert list(pairs) == ['component-A']
-    assert [record[0] for record in pairs['component-A'][0]] == ['pair-1']
-    assert [record[0] for record in pairs['component-A'][1]] == ['pair-1']
+    assert [record[0] for record in pairs['component-A'][0]] == ['pair-1', 'pair-2']
+    assert [record[0] for record in pairs['component-A'][1]] == ['pair-1', 'pair-2']
 
 
 @pytest.mark.parametrize('forward_ids, reverse_ids', [

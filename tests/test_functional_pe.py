@@ -74,7 +74,7 @@ def summarise_run(out_dir, log_text):
     with open(components) as handle:
         component_header = handle.readline().rstrip('\n').split(';')
         component_ids = {line.rstrip('\n').split(';')[-1] for line in handle if line.strip()}
-    kept = re.search(r'Kept (\d+) complete same-component read pairs; discarded (\d+)', log_text)
+    kept = re.search(r'Read pairs by component: (\d+) within one component, (\d+) spanning two \(given to both\), (\d+) with one mate in a component, (\d+) in no component', log_text)
     scaffolds = read_fasta(out_dir / 'final_assembly.fa')
     abundance = sorted(
         (seq, float(re.search(r'count=([0-9.]+)', header).group(1)))
@@ -86,7 +86,7 @@ def summarise_run(out_dir, log_text):
         'edge_count': edge_count,
         'component_header': component_header,
         'component_count': len({c for c in component_ids if not c.startswith('-')}),
-        'kept_discarded_pairs': kept.groups() if kept else None,
+        'pair_routing': kept.groups() if kept else None,
         'marker_reads': tuple(int(n) for n in re.search(
             r'Identified as marker: (\d+) / (\d+) reads', log_text).groups()),
         'scaffold_sequences': sorted(seq for _, seq in scaffolds),
@@ -158,7 +158,7 @@ def test_graph_is_independent_of_read_naming(pe_runs, style):
     assert run['node_count'] == reference['node_count']
     assert run['edge_count'] == reference['edge_count']
     assert run['component_count'] == reference['component_count']
-    assert run['kept_discarded_pairs'] == reference['kept_discarded_pairs']
+    assert run['pair_routing'] == reference['pair_routing']
 
 
 @pytest.mark.parametrize('style', [s for s in NAMING_STYLES if s != 'legacy'])
@@ -173,7 +173,7 @@ def test_coverage_subsampling_keeps_reads_whole_and_naming_independent(pe_runs_c
     node_keys = [(row[1], row[2]) for row in casava['node_rows']]
     assert len(node_keys) == len(set(node_keys))
     assert casava['node_count'] < pe_runs['casava']['node_count']  # subsampling removed reads
-    for key in ('node_count', 'edge_count', 'component_count', 'kept_discarded_pairs',
+    for key in ('node_count', 'edge_count', 'component_count', 'pair_routing',
                 'scaffold_sequences', 'abundance'):
         assert casava[key] == legacy[key], key
 

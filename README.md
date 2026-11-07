@@ -136,6 +136,11 @@ MATAM works on mates: after the read mapping it records which mate each alignmen
 graph (one node per mate), and counted for abundance as two distinct reads, whatever their
 naming. The results do not depend on the naming convention.
 
+Each read pair is assembled in every graph component that holds one of its mates.
+How pairs are handled from mapping to assembly, and how the results compare with
+upstream MATAM, is documented in
+[eval_and_release/paired_end_assembly](eval_and_release/paired_end_assembly/README.md).
+
 ## <a id="database-preparation"></a>3.2 Database preparation (clustering & indexation)
 
 SortMeRNA 6 introduced an index format that is incompatible with indexes created by SortMeRNA 4 or 5. When upgrading, delete the `<prefix>.complete.smr` and `<prefix>.clustered.smr` directories, then rerun `index_ref_db.py` or `matam_db_preprocessing.py` before assembly.

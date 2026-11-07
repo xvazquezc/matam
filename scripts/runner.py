@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import codecs
 import sys
 import os
 import logging
@@ -9,14 +10,15 @@ import subprocess
 logger = logging.getLogger()
 
 
-def logged_call(command, verbose=False, pipefail=False):
+def logged_call(command, verbose=False, pipefail=True):
     """
     A logged version of subprocess.call. Do not wait the end of the
     process to start logging.
 
-    With pipefail=True the command runs under bash with ``set -o pipefail``,
-    so a failure anywhere in a shell pipeline is reported, not only a
-    failure of its last command.
+    By default the command runs under bash with ``set -o pipefail``, so a
+    failure anywhere in a shell pipeline is reported, not only a failure of
+    its last command. A pipeline whose inner commands may legitimately exit
+    non-zero (e.g. ``grep`` with no match) must pass pipefail=False.
     """
     logger.debug('CMD: {0}'.format(command))
     executable = None
@@ -29,9 +31,8 @@ def logged_call(command, verbose=False, pipefail=False):
         stdout = subprocess.PIPE
         stderr = subprocess.STDOUT
     else:
-        null = open(os.devnull, 'w')
-        stdout = null
-        stderr = null
+        stdout = subprocess.DEVNULL
+        stderr = subprocess.DEVNULL
 
     #Update temporally the handler (No prefix, no endline)
     old_handlers = {handler: handler.formatter for handler in logger.handlers}
@@ -42,9 +43,15 @@ def logged_call(command, verbose=False, pipefail=False):
     with subprocess.Popen(command, stdout=stdout, stderr=stderr, shell=True, bufsize=0,
                           executable=executable) as process:
         if verbose:
-            while process.poll() is None:
-                message = os.read(process.stdout.fileno(), 1024).decode()
-                logger.info(message)
+            # Read until EOF, not until the process exits, so the end of the
+            # output is not lost; decode incrementally so a multi-byte
+            # character split across two reads stays intact.
+            decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+            for chunk in iter(lambda: os.read(process.stdout.fileno(), 1024), b''):
+                logger.info(decoder.decode(chunk))
+            tail = decoder.decode(b'', final=True)
+            if tail:
+                logger.info(tail)
 
 
     # rehabilitate previous handler
@@ -55,7 +62,7 @@ def logged_call(command, verbose=False, pipefail=False):
     return process.wait()
 
 
-def logged_check_call(command, verbose=False, pipefail=False):
+def logged_check_call(command, verbose=False, pipefail=True):
     """
     A logged version of subprocess.check_call
     """
