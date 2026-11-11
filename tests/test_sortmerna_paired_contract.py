@@ -13,7 +13,8 @@ sys.path.pop(0)
 def test_paired_mapping_keeps_complete_pairs_in_separate_fastx_files():
     """The MarkerMAG-nf filter wrapper relies on this MATAM/SortMeRNA contract."""
     source = (Path(__file__).parent.parent / 'scripts' / 'matam_assembly.py').read_text()
-    mapping_stage = source.split("logger.info('=== Reads mapping against ref db ===')", 1)[1]
+    mapping_stage = source.split("# Everything that determines the mapping output", 1)[1].split(
+        "logger.info('=== Reads mapping against ref db ===')", 1)[0]
 
     assert "--reads ' + args.forward + ' --reads ' + args.reverse" in mapping_stage
     assert "cmd_line += ' --paired_in --out2'" in mapping_stage

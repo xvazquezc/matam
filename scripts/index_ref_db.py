@@ -8,6 +8,7 @@ import subprocess
 import time
 import logging
 from binary_utils import Binary
+import sortmerna_index
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -136,35 +137,31 @@ if __name__ == '__main__':
     ######################################################
     # SortMeRNA indexing of complete and clustered ref db
 
+    # Same indexes, parameters and records as matam_db_preprocessing.py
+    # (see sortmerna_index.py), so matam_assembly.py can check and reuse them.
     sortmerna_bin = Binary.assert_which('sortmerna')
+    index_params = sortmerna_index.index_params(args.max_memory)
 
-    # SortMeRNA complete ref db indexing
-    logger.info('Indexing complete ref db')
+    def call_sortmerna(cmd_line, verbose):
+        logger.debug('CMD: {0}'.format(cmd_line))
+        returncode = subprocess.call(cmd_line, shell=True)
+        if verbose:
+            sys.stdout.write('\n')
+        return returncode
 
-    cmd_line = sortmerna_bin + ' --ref ' + complete_ref_db_filepath
-    cmd_line += ' --workdir ' + complete_ref_db_basepath + '.smr'
-    cmd_line += ' --task 5'
-    if args.verbose:
-        cmd_line += ' -v '
-
-    logger.debug('CMD: {0}'.format(cmd_line))
-    error_code += subprocess.call(cmd_line, shell=True)
-    if args.verbose:
-        sys.stdout.write('\n')
-
-    # SortMeRNA clustered ref db indexing
-    logger.info('Indexing clustered ref db')
-
-    cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
-    cmd_line += ' --workdir ' + clustered_ref_db_basepath + '.smr'
-    cmd_line += ' --task 5'
-    if args.verbose:
-        cmd_line += ' -v '
-
-    logger.debug('CMD: {0}'.format(cmd_line))
-    error_code += subprocess.call(cmd_line, shell=True)
-    if args.verbose:
-        sys.stdout.write('\n')
+    for label, ref_db_filepath, ref_db_basepath in (
+            ('complete', complete_ref_db_filepath, complete_ref_db_basepath),
+            ('clustered', clustered_ref_db_filepath, clustered_ref_db_basepath)):
+        logger.info('Indexing {0} ref db'.format(label))
+        smr_dir = ref_db_basepath + '.smr'
+        try:
+            sortmerna_index.write_params(smr_dir, index_params)
+            with sortmerna_index.locked(smr_dir):
+                sortmerna_index.build(sortmerna_bin, ref_db_filepath, os.path.join(smr_dir, 'idx'),
+                                      index_params, verbose=args.verbose, call=call_sortmerna)
+        except (sortmerna_index.IndexBuildError, OSError) as error:
+            logger.error('Could not index {0} ref db: {1}'.format(label, error))
+            error_code += 1
 
     ###############
     # Exit program

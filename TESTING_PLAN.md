@@ -359,6 +359,257 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 - **Fixed 2026-11-06.** **Test:**
   `test_ovgraphbuild_mates.py::test_mapped_record_after_an_unmapped_one_starts_its_own_node`.
 
+### 13. [x] Rerun or `--resume_from` into an existing output directory fails (SortMeRNA 7 run state)
+- SortMeRNA 7 keeps run state in `<workdir>/kvdb` and aborts with
+  `kvdb resume aborted: inputs mismatch` when the next run's inputs differ.
+  MATAM reuses `sortmerna_reads_mapping/` and `sortmerna_scaffolding/`, so
+  resuming from any step up to `scaffolding` fails at scaffolding (the contigs
+  are rebuilt). A rerun with different reads into the same directory fails at
+  step 1. Resuming from `abundance_calculation` or `taxonomic_assignment` works
+  (abundance uses a fresh temp dir).
+- Found 2026-11-10 by a smoke test. Dates from the SortMeRNA v5+ migration
+  (`c5f5a06`), not the paired-end rework.
+- **Fix idea:** remove `<workdir>/kvdb` before each SortMeRNA mapping (the
+  state isn't reusable across runs); add a resume test.
+- **Fixed 2026-11-10** (user's spec: check each step for completeness; remove
+  incomplete output before continuing). SortMeRNA 7 has no force/overwrite
+  option (only `--kvdb` and checkpointing via `--flush-delay`).
+  New `scripts/sortmerna_step.py`, used for the read mapping and the
+  scaffolding mapping:
+  - after a successful run, `<aligned>.matam_complete.json` records the
+    command, the inputs (size, mtime) and the required outputs (size); run
+    state (`kvdb`, `readb`) is then removed;
+  - a matching record means the step is complete and its output is reused;
+    otherwise (no record, missing/truncated output, changed inputs or command)
+    the step's SortMeRNA outputs and run state are removed and it reruns;
+  - `--threads` and `-v` are not part of the record; paths inside the run are
+    stored relative, so a moved or copied run directory stays resumable;
+  - when `--resume_from` skips the read mapping, its output must be complete,
+    or MATAM stops and asks to resume from `reads_mapping`; output from an
+    older MATAM without a record is used with a warning.
+  Verified: resume from every step (on runs from the old and new code) gives a
+  byte-identical final assembly; in place, resuming from `reads_mapping`
+  reuses the mapping, from `scaffolding` reuses the contig mapping; a
+  SortMeRNA run killed mid-mapping leaves `kvdb` behind and the rerun clears
+  it and completes; a rerun into the same directory with other reads (same
+  file names) redoes both mappings.
+  **Tests:** `test_sortmerna_step.py` (13, fake SortMeRNA that aborts on stale
+  `kvdb` like the real one), `test_functional_pe.py` resume tests (5; all fail
+  on the previous code, 2 with `kvdb resume aborted`).
+
+### 14. [x] `--contigs_binning` fails with current samtools (fixed, untested; no test planned)
+- `compute_contigs_compatibility.py` writes placeholder `@SQ ... LN:9999999999`
+  headers (upstream code); current samtools rejects lengths above the BAM limit
+  (`output format is not compatible with very large references`), so
+  `samtools sort` fails.
+- Found 2026-11-10 by a smoke test. Pre-existing upstream code exposed by
+  modern samtools.
+- **Fixed 2026-11-11:** the placeholder headers are written as `LN:2147483647`
+  (the BAM maximum). **Untested:** no unit or end-to-end test was added, and
+  none is planned (MarkerMAG-nf doesn't use the option).
+- **Evaluated for MarkerMAG-nf, 2026-11-11** (before the fix). With
+  `LN:2147483647` in a scratch copy, all 21 binning runs complete. Setup:
+  SILVA 144 subset DB (10 families, 51,483 refs, 95% clustering); simulated
+  community (ART HS25 2x150): 6 controls in the DB, 8 strain pairs (DB
+  sequence + copy with 0.3/0.6/1.0/1.5% random substitutions, 1:1 and 3:1),
+  6 novel pairs (95-98.4% apart, removed with their >=98.5% relatives). Run
+  through MarkerMAG-nf's own `markermag_matam_assemble_pct.py` at 1-100%,
+  then its post-processing (vsearch 0.99, longest per cluster, >=1200 bp).
+  3 replicates (read and MATAM seeds), default / binning:
+  - MarkerMAG-nf doesn't pass the option. If it did, its wrapper reads
+    `workdir/scaffolds.NR.min_500bp.fa`, which binning renames
+    (`scaffolds.contigs_binning.NR...`), so every depth comes back empty.
+  - Final 16S 16-18 / 18-25; exact (>=99.9% to a truth) 10-13 / 5-8.
+  - Strain pairs >=1% apart with both members recovered (>=99%): 0-1/4 /
+    3-4/4. Strain truths exact: 3-6/16 / 1/16. Mosaic sequences (alleles of
+    both siblings) 8-10 / 12-17.
+  - Novel truths recovered 3-4/12 / 1-3/12: binning splits the mosaics into
+    clean pieces of ~700 bp, below the 1200 bp linking minimum.
+  - High-coverage control (900x): binning turns error contigs into their own
+    scaffold, and longest-per-cluster can pick it (99.4% instead of 100%).
+  - Default mode also makes mosaics whenever related organisms share a
+    reference, including a 95%-apart novel pair (31 vs 5 alleles).
+  Verdict: a trade-off, not an improvement; keep it off in MarkerMAG-nf.
+  Scripts: `scratchpad/binning/` (session 5b25223e).
+
+### 15. [x] SortMeRNA reference index: reuse unchecked, rebuild unsafe, indexing not optional
+- **Does mapping reuse the prebuilt index?** Yes. With `--idx-dir <db>.<kind>.smr/idx`
+  SortMeRNA 7.1 logs `Found 4 non-empty index files. Skipping indexing.` But it
+  checks nothing else:
+  - the index files are named after a hash of the fasta's *file name* only (not
+    its path, content, `-L`, `-m` or `--max_pos`);
+  - a fasta rewritten under the same name is used with the old index: same size
+    gives silently wrong seeds; a shorter fasta segfaulted (rc 139);
+  - an index built with another `-L`/`-m` is used as is. `-m` changes results:
+    a 600-ref index split into 9 parts (`-m 1`) gave 9,883 vs 5,801 blast lines
+    with `--num_alignments 10` (alignments are selected per part);
+  - index files are created empty at the start of a build and filled at the end,
+    so an index left by a killed build, or one still being written by another
+    run, passes the "non-empty" test.
+- **Without a prebuilt index** (before this fix): if `<db>.<kind>.smr` is
+  missing, mapping fails (`filesystem error: cannot create directory`: SortMeRNA
+  creates `idx/` but not its parent). If `.smr` exists, SortMeRNA builds in the
+  DB directory with no lock: 2 builders plus 1 mapping run started together
+  each built the full index (3x the work, 15 min each on 30k SILVA seqs).
+- `matam_db_preprocessing.py --max_memory` was ignored (no `-m` since the port).
+- `--max_pos`: SortMeRNA 7.1's help says the default is 1000, but the effective
+  default is 10000, as in 2.1b: an index built without `--max_pos` is
+  byte-identical to `--max_pos 10000` and differs from `--max_pos 1000`. The
+  port didn't change the index. A real 1000 cap (30k SILVA seqs, run side by
+  side): 201 vs 267 s, 0.96 vs 1.25 GB RSS, 515 vs 579 MB. Best hit unchanged
+  for 94.9% of 10k reads, better with 10000 for 3.4%, better with 1000 for
+  1.6%. Kept at 10000 (same as 2.1b and the existing indexes).
+- **Cost on a full SILVA SSU NR99 fasta** (`SILVA_144_SSURef_NR99_tax_silva_trunc.fasta`,
+  U→T, 905,628 seqs, 1.37 Gbp; clustered with vsearch at 95%: 288,470
+  centroids, 446 Mbp, 1 h 41 min on 8 threads, 5.7 GB). `sortmerna --task 5
+  -m 10000` is single-threaded. Random subsets, with `/usr/bin/time -v`, on a
+  quiet machine: 30k complete 233-267 s, 1.25 GB, 579 MB; 30k centroids 238 s,
+  1.6 GB, 679 MB; 100k complete 846 s, 2.94 GB, 1.64 GB on disk. Time grows
+  slightly faster than linearly (30k to 100k: ×3.6 for ×3.3 seqs). The same
+  runs under load were 2-4.5× slower.
+  Extrapolated (exponent 1.07): complete index ≈ 2-2.5 h and ≈ 15 GB on disk;
+  clustered ≈ 40-45 min and ≈ 6.5 GB. RSS grew linearly with the sequence count
+  (≈ 24 MB per 1,000 seqs); not extrapolated to the full DB, since `-m` splits
+  large indexes into parts (unknown at -m 10000). A full complete-DB run
+  reached 5.2 GB after 63 min under load, then I stopped it (it would have
+  taken 4-5 h at that load).
+- **Fixed 2026-11-10.** New `scripts/sortmerna_index.py`:
+  - one definition of the indexing parameters: `-L 18 --max_pos 10000 -m
+    <--max_memory>`, passed explicitly. The DB stores them in
+    `<db>.<kind>.smr/matam_index_params.json`, and every index of that DB,
+    prebuilt or built at mapping time, uses them;
+  - indexes are built in a temp dir and renamed into place with a record
+    (`idx/matam_index.json`: fasta name, size, mtime, SHA-256, parameters,
+    SortMeRNA version, index file sizes), under a lock file;
+  - before each mapping MATAM checks the record (SHA-256 only when the size
+    matches but the mtime doesn't). Stale, incomplete or other-parameter
+    indexes are rebuilt;
+  - an index without a record (existing DBs) is adopted if SortMeRNA's
+    `<hash>.idx_stats.yaml` matches: same fasta name, size, number of sequences
+    and total length, `L`, `max_positions` (≤ 10000 and not exactly 1000), a
+    partitioning `-m` gives, intact files. The record is then added (0.26 s on
+    30k seqs). A DB without a params file is treated as indexed by older MATAM
+    with SortMeRNA's defaults (`-m 3072`, any number of parts), and keeps them
+    when rebuilt. Not detectable: a hand-picked cap below 10000 other than 1000,
+    and a same-size edit that keeps sequence count and total length;
+  - mapping passes `--idx-dir ... --index 0` (SortMeRNA never builds itself),
+    as a run option outside the completion record (#13). The index is resolved
+    only when the step actually runs;
+  - no usable index: built once in the DB dir if writable (concurrent runs wait
+    on the lock), else privately in the step's SortMeRNA workdir
+    (`sortmerna_*/idx`, reused by reruns). Each case is logged;
+  - `matam_db_preprocessing.py --skip_index` (default: build), and `-m` restored
+    there and in `index_ref_db.py`, which uses the same helper.
+- **Default stays "build"**: every run needs both indexes, and the build is
+  single-threaded and long on SILVA (see the progress log). Skipping it moves
+  that cost into the first assembly run, or into every run on a read-only DB.
+  `--skip_index` suits `--filter_only` users (only the clustered index is ever
+  built), and DBs indexed later or elsewhere.
+- **Not fixed (separate):** a read-only DB still fails at scaffolding:
+  `samtools view -T <db>.complete.fasta` writes `<db>.complete.fasta.fai` next
+  to the fasta (concurrent runs on a writable DB race on it too).
+- **Tests:** `test_sortmerna_index.py` (23, real SortMeRNA: record, stale by
+  size/checksum, copied fasta, other parameters, truncated files, adoption and
+  its rejections, failed build, writable/read-only DB, 3 concurrent runs build
+  once); `test_sortmerna_step.py` (`prepare` hook); `test_db_preprocessing.py`
+  (record with `-m` = `--max_memory`, `--skip_index`); `test_functional_pe.py`
+  (prebuilt index used; unindexed writable DB indexed once; unindexed read-only
+  DB gives the same assembly as the prebuilt one, with private indexes).
+
+### 16. [x] DB preprocessing always re-clusters (no way to reuse a clustered set)
+- **Problem:** the 95% vsearch clustering of SILVA NR99 takes ~1 h 40 min on 8
+  threads (288,470 centroids from 905,628 sequences), and was redone on every
+  preprocessing, even with a clustered set at hand. (SILVA's own NR99 99%
+  clustering is not a substitute: the clustered db is MATAM's deliberately less
+  redundant recruitment set.)
+- **Fix:** `matam_db_preprocessing.py --clustered_ref FASTA`. Only its IDs are
+  used: the sequences are selected from the cleaned complete db (`seqkit grep`),
+  so they get the same cleaning and their IDs are always in the complete db and
+  taxonomy. IDs missing from the cleaned db are reported and left out; none found
+  is an error. Mutually exclusive with `--clustering_id_threshold` and
+  `--by_domain`. The db prefix is named after the clustered file.
+- **Tests:** `test_db_preprocessing.py`: selection keeps the cleaned sequences
+  in db order with ID-only headers, no vsearch run, missing IDs reported, tmp
+  files removed; no matching ID is an error; conflicting options rejected.
+- [x] **Are the dropped centroids orphan taxa?**
+  - **2026-11-10, full SILVA, taxon level:** 1,811 of 288,470 centroids were
+    dropped, all for >5 consecutive non-ACGT bases. That day's taxon labels are
+    shifted by one: SILVA 144 has an extra rank, domain;kingdom;phylum;…, so
+    "genus" was really the family level.
+  - **2026-11-11, member level, on a random 10k-sequence SILVA subset** (full
+    run stopped at the user's request). Clustered at 95% with `--uc`: 6,978
+    centroids.
+    - Cleaning removed 29 sequences, 23 of them centroids. N-rich sequences
+      seldom reach 95% to anything, so they become centroids, mostly
+      singletons. The 23 dropped clusters had only 7 members.
+    - 2 members (both eukaryotes) have no kept centroid at >=95%. Their
+      lineages are still represented, and their best kept centroids are at
+      91.9% and 94.8%.
+    - 4 prokaryote genera and 1 family lost their only centroid, but all of
+      them also have no sequence left in the complete db. Cleaning removes
+      them whatever the clustering, so `--clustered_ref` added no taxon loss
+      here.
+  - **Verdict:** orphaning from external centroids is marginal. The report
+    (#17) flags it per run.
+- **Also:** `--by_kingdom`/`--kingdoms` renamed `--by_domain`/`--domains`. The
+  old names are still accepted, with a deprecation warning. The default db
+  suffix is now `_bd`, was `_bk`. The domain is matched on the first taxonomy
+  rank instead of anywhere in the header. On SILVA 144 this made no
+  difference, but a name such as "Some bacteria endosymbiont" would have put a
+  eukaryote into both sets.
+
+### 17. [x] Safeguard: sequences lost before the clustered db are reported, with their nearest remaining relative
+- **Problem:** sequences can be lost on the way to the clustered db with only a
+  count in the log, or nothing at all:
+  - removed by cleaning: a run of more than `--max_consecutive_n` (default 5)
+    non-ACGT characters, N or any IUPAC code, or the optional length filters;
+  - `--clustered_ref` centroids not in the cleaned db;
+  - with `--by_domain`, sequences outside `--domains`, lost silently.
+
+  Inside preprocessing, vsearch clusters the cleaned db, so no centroid is lost
+  after clustering; there, the loss is the sequences removed before it.
+- **Criterion: a close relative must remain, not a taxon name.** The first
+  version checked taxon names. On the 10k subset names and similarity
+  disagreed: Rathayibacter kept a namesake while its nearest remaining
+  reference was 79.5%; Actinobacillus--other lost its name while Basfia
+  remained at 94.6%.
+  - Each discarded sequence (other domains excepted) is aligned to the
+    remaining references, i.e. the cleaned complete db, with `vsearch
+    --usearch_global` and the clustering's semi-global setting. At least 90%
+    of the query must be covered: without that, free end gaps gave 1-column
+    "100%" hits.
+  - A close relative is left if the best identity is >= `--close_relative_id`
+    (default: the clustering identity; 0 skips the search).
+  - vsearch counts N and IUPAC codes as matching compatible bases.
+  - The clustered db is no reference for this: centroids are, by
+    construction, below the clustering identity to each other.
+- **Files:**
+  - `<db>.discarded.tsv`: id, reason, taxonomy, nearest remaining reference,
+    identity, its lineage, and whether a close relative is left.
+  - `<db>.discarded_taxa.tsv`: per reason and taxon, the level (1 = domain),
+    lineage flag, discarded count, count without a close relative, and counts
+    left by name in the complete and clustered db.
+  - Levels are used because rank counts differ: SILVA 144 adds a kingdom rank;
+    eukaryotes have 2-20 fields and are reported at domain level only. The
+    organism name (last field) is not a taxon.
+  - The log gives one line per reason, a WARNING when sequences leave no close
+    relative, with the worst examples and their nearest identity.
+- **10k SILVA subset** (1.1% of SILVA, so relatives are much sparser than in
+  the full db):
+  - All 6 non-centroid cleaning removals have a close relative left.
+  - 20 of the 23 dropped centroids have none (nearest 79.5-94.6%).
+  - Centroids are the longest sequences of their clusters; shorter members
+    often cover <90% of them, which counts as no close relative over the
+    whole sequence.
+- **Tests:**
+  - `test_discarded_refs_report.py` (9 unit tests).
+  - `test_db_preprocessing.py`:
+    - unrelated vs near-duplicate removed sequence (nearest ABA_X81660,
+      >=99%);
+    - `--close_relative_id 1.0` and `0`;
+    - discarded `--clustered_ref` centroids, including one not in the input;
+    - other domains.
+
 ### F1. [x] Follow-up: over half of the pairs are discarded before SGA
 - With correct mate identity, mates often fall into different graph
   components. The "same-component pair" rule then discards the pair:
@@ -480,3 +731,13 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-06 | #3, #4, #5, #6, #9 | Fixed; `test_input_parsers.py`, `test_db_preprocessing.py`, runner tests (17 new checks fail on the previous code). Pipefail default after auditing all call sites. Suite 115 passed, 6 skipped |
 | 2026-11-07 | F1 | Cause: components ≈ fragment length. Merging mate-linked components rejected (chains species). Pairs now go to every component holding a mate: final ref coverage 98.3% vs upstream 97.9% (old rule 80.9%). Suite 116 passed, 6 skipped |
 | 2026-11-07 | U1, F1 | Documented in `eval_and_release/paired_end_assembly/README.md`, with portable `run_compare.sh` / `summarise.py`; README links to it |
+| 2026-11-10 | #13, #14 | Smoke test of options outside the e2e test: full run with taxonomy/Krona, read correction yes/auto, `--optimize_components`, `--straight_mode`, `--workdir`, gz input without `-v` all OK; resume (#13) and `--contigs_binning` (#14) fail |
+| 2026-11-10 | #13 | Completeness records for SortMeRNA steps (`sortmerna_step.py`): complete output reused, incomplete/outdated output and run state removed before rerunning; resume and rerun verified end to end. README documents resuming. Suite 134 passed, 6 skipped |
+| 2026-11-10 | #15 | SortMeRNA index: mapping reuses the prebuilt index but never checks it (stale index used silently or segfaults; `-m` changes results; concurrent builds race). New `sortmerna_index.py`: one set of indexing params (`-L 18 --max_pos 10000 -m <max_memory>`) per DB, record-checked indexes, adoption of record-less ones, locked atomic builds in the DB dir or the run. `--skip_index` (default: build). SILVA NR99 indexing extrapolated ≈ 2-2.5 h (complete) + 45 min (clustered). Suite 164 passed, 6 skipped |
+| 2026-11-10 | #16 | `--clustered_ref` reuses a clustered set instead of re-clustering. Full SILVA NR99 with the 95% vsearch centroids: preprocessing (no index) in 32 s instead of ~1 h 40 min for vsearch; 286,659 of 288,470 centroids selected, 1,811 reported as removed by the N filter (centroids made from the uncleaned fasta). Suite 168 passed, 6 skipped |
+| 2026-11-10 | #16 | `--clustered_ref` help/README no longer tied to 95%. `--by_kingdom` renamed to `--by_domain` (old names deprecated aliases; domain anchored to the first rank). Taxon-level orphan check of the 1,811 dropped centroids done; member-level check stopped and scheduled for next session. Suite 170 passed, 6 skipped |
+| 2026-11-11 | #17 | Report of the reference sequences that don't reach the clustered db (cleaning, discarded `--clustered_ref` centroids, `--by_domain` other domains) with taxonomy and lost taxa per rank: `<db>.discarded.tsv`, `<db>.discarded_taxa.tsv`, log summary. Full SILVA re-clustering with `--uc` started for the real-data check and the scheduled orphan test |
+| 2026-11-11 | #16, #17 | Report uses taxonomy levels, not rank names: SILVA 144 adds a kingdom rank, which shifted the 11-10 labels. Eukaryotes are reported at domain level only. Lineages lost only from the clustered db are told apart from those gone from the complete db. Orphan test on a 10k SILVA subset: 23 dropped centroids, 7 members, 2 orphans (euk, best kept centroid 91.9%/94.8%); the 4 genera + 1 family that lost their centroid are all gone from the complete db too. Suite 181 passed, 6 skipped |
+| 2026-11-11 | #17 | Lost taxa judged by sequence similarity, not names: each discarded sequence's nearest remaining reference (vsearch, >=90% query coverage), close relative if >= `--close_relative_id` (default clustering identity). 10k subset: 0/6 cleaning removals and 20/23 dropped centroids without a close relative (sparse subset). Suite 183 passed, 6 skipped |
+| 2026-11-11 | #14 | `--contigs_binning` evaluated for MarkerMAG-nf on a simulated SILVA-subset community (3 replicates): resolves >=1%-apart strains (3-4/4 vs 0-1/4) but halves exact sequences, adds mosaics and error duplicates, and loses novel 16S under 1200 bp. MarkerMAG-nf's wrapper would get no scaffolds with it (file renamed). Kept off; #14 fix (`LN:2147483647`) verified in a scratch copy only |
+| 2026-11-11 | #14 | Fixed: `compute_contigs_compatibility.py` writes `LN:2147483647` instead of `LN:9999999999`. Untested by design: no test added or planned |

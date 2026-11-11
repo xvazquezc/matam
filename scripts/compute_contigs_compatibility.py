@@ -366,7 +366,7 @@ if __name__ == '__main__':
 
         # If there is no incompatible contigs, no need to split sam file
         if not any(2 in t for t in contigs_compatibility_matrix):
-            args.output_sam.write('@SQ\tSN:{0}\tLN:9999999999\n'.format(ref_id))
+            args.output_sam.write('@SQ\tSN:{0}\tLN:2147483647\n'.format(ref_id))
             for tab in tab_list:
                 args.output_sam.write('{0}\n'.format('\t'.join(tab)))
         # Else we compute sets of compatible contigs
@@ -376,7 +376,7 @@ if __name__ == '__main__':
             #~ print(bin_list)
             # Output SAM lines
             for b in range(len(bin_list)):
-                args.output_sam.write('@SQ\tSN:{0}_{1}\tLN:9999999999\n'.format(ref_id, b))
+                args.output_sam.write('@SQ\tSN:{0}_{1}\tLN:2147483647\n'.format(ref_id, b))
                 for i in bin_list[b]:
                     tab = tab_list[i]
                     # Modify ref column

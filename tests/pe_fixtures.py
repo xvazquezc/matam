@@ -101,7 +101,7 @@ def tool_env():
     return env
 
 
-def build_mini_db(out_dir, cpu=2):
+def build_mini_db(out_dir, cpu=2, extra_args=()):
     """Build a MATAM database from the 16 example references.
 
     Returns the database prefix to pass to ``matam_assembly.py -d``.
@@ -112,6 +112,6 @@ def build_mini_db(out_dir, cpu=2):
     subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / 'matam_db_preprocessing.py'),
          '-i', str(refs), '-d', str(out_dir), '--cpu', str(cpu),
-         '--max_memory', '2000', '--out_db_name', 'mini16'],
+         '--max_memory', '2000', '--out_db_name', 'mini16', *extra_args],
         check=True, env=tool_env(), capture_output=True, text=True)
     return out_dir / 'mini16'

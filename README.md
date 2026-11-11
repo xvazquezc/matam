@@ -164,6 +164,40 @@ If the provided database does not fulfill your needs, you can prepare a custom d
 
 where `$DBDIR` is the directory used to store the database.
 
+This also builds the SortMeRNA indexes of the database (`<prefix>.complete.smr/idx`,
+`<prefix>.clustered.smr/idx`), with `-m` set by `--max_memory`. Indexing is single-threaded:
+for a full SILVA SSU NR99 database, expect about 2-2.5 h and 15 GB for the complete index
+and 45 min and 6.5 GB for the clustered one. Add `--skip_index` to leave it out:
+`matam_assembly.py` then builds each index the first time it needs it, in the database
+directory if it is writable (once, shared by later runs; concurrent runs wait for it), or
+otherwise inside the run, in every run. Each index carries a record of the fasta and
+indexing parameters it was built from (`matam_index.json`); an index that does not match
+its fasta or the database's parameters is rebuilt rather than used.
+
+The clustered database (used for read mapping and the overlap graph) is made by clustering
+the references with vsearch at `--clustering_id_threshold` identity (default 0.95), which
+takes about 1 h 40 min on 8 threads for SILVA NR99 at 95%. `--by_domain` clusters each domain
+(first rank of the taxonomy) separately. If you already have a clustered set, at whatever
+identity you chose, e.g. the clustered database of an earlier preprocessing, pass it with
+`--clustered_ref clustered.fasta` to skip the clustering: its sequence IDs select the
+clustered sequences from the cleaned input database, and the database prefix is named after
+that file. Make it from the cleaned database: centroids removed by the cleaning (N or length
+filters) leave their clusters without a representative, and are reported. SILVA's NR99 is
+only made non-redundant at 99%; mapping against it unclustered is slower and spreads each
+read's best alignments over near-identical references.
+
+Every reference sequence that does not reach the clustered database is reported in
+`<prefix>.discarded.tsv`. That covers sequences removed by cleaning (a run of more than
+`--max_consecutive_n` ambiguous bases, or the optional length filters), `--clustered_ref`
+centroids that are not in the cleaned database, and with `--by_domain` sequences of other
+domains. Except for other domains, each one is aligned to the remaining references (the
+cleaned complete database) and its nearest reference is reported, with the identity and
+taxonomy. It has a close relative left if that identity is at least `--close_relative_id`
+(default: the clustering identity) over at least 90% of the sequence; `--close_relative_id 0`
+skips the search. `<prefix>.discarded_taxa.tsv` summarises this by taxon and taxonomy level
+(1 = domain; eukaryotes at the domain level only). The log warns about discarded sequences
+that leave no close relative.
+
 ## <a id="de-novo-assembly"></a>3.3 De-novo assembly
 
 When your database is ready, then you will be able to reconstruct your markers:
@@ -177,7 +211,14 @@ When your database is ready, then you will be able to reconstruct your markers:
   `matam_assembly.py -d $DBDIR/prefix --forward reads_R1.fastq --reverse reads_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
     The taxonomic assignment is done with [RDP classifier](https://rdp.cme.msu.edu/) and the training model used by default is "16srrna"
 
-SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes remain under the database `.smr/idx` directories.
+SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes stay under the database `.smr/idx` directories (or, for a read-only database without prebuilt indexes, in the SortMeRNA work directories of the run).
+
+A run can be resumed with `--resume_from STEP`, or rerun into the same output directory.
+After each SortMeRNA mapping, MATAM records the command, inputs and outputs in a
+`*.matam_complete.json` file next to the outputs. A complete mapping of the same inputs is
+reused; an incomplete one (e.g. an interrupted run) or one made from other inputs is
+removed, together with SortMeRNA's run state, and redone. Resuming after the read mapping
+requires its output to be complete; otherwise MATAM asks to resume from `reads_mapping`.
 
 MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
 temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`

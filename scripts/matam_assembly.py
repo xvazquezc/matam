@@ -21,6 +21,9 @@ from krona import rdp_file_to_krona_text_file, make_krona_plot
 from binary_utils import Binary
 import components_assembly
 import pe_tables
+import sortmerna_index
+import sortmerna_step
+from sortmerna_step import find_sortmerna_output
 from assembler_factory import AssemblerFactory
 from fastq_utils import read_fastq_file_handle, is_phred33
 
@@ -37,31 +40,6 @@ def fastq_line_count(filepath):
     opener = gzip.open if filepath.endswith('.gz') else open
     with opener(filepath, 'rt') as fastq_fh:
         return sum(1 for _ in fastq_fh)
-
-
-def find_sortmerna_output(basepath, extensions):
-    """Return the one SortMeRNA output matching a prefix and file type.
-
-    SortMeRNA 7 writes ``.fq`` for FASTQ output regardless of whether the
-    input was named ``.fq`` or ``.fastq``.  ``--zip-out`` additionally appends
-    ``.gz`` to all report files.  Do not infer the output name from the input
-    name: discover the generated file instead.
-    """
-    candidates = [
-        basepath + extension + compression
-        for extension in extensions
-        for compression in ('', '.gz')
-    ]
-    found = [candidate for candidate in candidates if os.path.isfile(candidate)]
-    if len(found) == 1:
-        return found[0]
-    if not found:
-        raise FileNotFoundError(
-            'SortMeRNA did not produce an expected output: {}'.format(
-                ', '.join(candidates)))
-    raise RuntimeError(
-        'SortMeRNA produced ambiguous outputs for {}: {}'.format(
-            basepath, ', '.join(found)))
 
 
 def stream_file_command(filepath):
@@ -804,11 +782,29 @@ def main():
     clustered_ref_db_basepath = os.path.join(ref_db_dir, clustered_ref_db_basename)
     clustered_ref_db_filename = clustered_ref_db_basename + '.fasta'
     clustered_ref_db_filepath = os.path.join(ref_db_dir, clustered_ref_db_filename)
+    # SortMeRNA indexes prebuilt by matam_db_preprocessing.py
     clustered_ref_db_smr_idx_dir = os.path.join(clustered_ref_db_basepath + '.smr', 'idx')
     complete_ref_db_smr_idx_dir = os.path.join(complete_ref_db_basepath + '.smr', 'idx')
 
     sortmerna_reads_workdir = os.path.join(args.workdir, 'sortmerna_reads_mapping')
     sortmerna_scaffolding_workdir = os.path.join(args.workdir, 'sortmerna_scaffolding')
+
+    def sortmerna_index_options(ref_fasta, db_idx_dir, step_workdir, label):
+        """Find or build the index of ref_fasta; return the SortMeRNA options to use it.
+
+        Uses the database's prebuilt index if it matches the fasta, otherwise
+        builds it, with the database's indexing parameters, in the database
+        directory (if writable) or in the step's work directory. '--index 0'
+        keeps SortMeRNA from building one itself.
+        """
+        try:
+            idx_dir = sortmerna_index.ensure(
+                sortmerna_bin, ref_fasta, db_idx_dir, os.path.join(step_workdir, 'idx'),
+                verbose=args.verbose, label=label)
+        except sortmerna_index.IndexBuildError as error:
+            logger.fatal(str(error))
+            sys.exit('SortMeRNA indexing failed')
+        return ' --idx-dir ' + shlex.quote(idx_dir) + ' --index 0'
 
     # Read mapping
     sortme_output_basename = input_fastq_basename
@@ -1028,40 +1024,52 @@ def main():
         logger.info('Resuming from reads mapping')
         run_step = True
 
+    # Everything that determines the mapping output; --threads, -v and the
+    # index location (added by sortmerna_index_options) don't.
+    cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
+    cmd_line += ' --workdir ' + sortmerna_reads_workdir
+    # SortMeRNA v7 accepts two separate read files.  ``--paired_in`` keeps
+    # complete pairs in its aligned FASTQ output, and ``--out2`` keeps the
+    # pairs as separate R1/R2 files (``<aligned>_fwd`` / ``<aligned>_rev``).
+    cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
+    cmd_line += ' --paired_in --out2'
+    cmd_line += ' --aligned ' + sortme_output_basepath
+    cmd_line += ' --fastx --sam --blast 1'
+    cmd_line += ' --zip-out true'
+    cmd_line += ' --num_alignments ' + str(args.best)
+    cmd_line += ' -e {0:.2e}'.format(args.evalue)
+    run_options = ' --threads ' + str(args.cpu) + (' -v' if args.verbose else '')
+    mapping_inputs = [args.forward, args.reverse, clustered_ref_db_filepath]
+    mapping_outputs = [('_fwd', ('.fq', '.fastq')), ('_rev', ('.fq', '.fastq')), ('', ('.sam',))]
+
     if run_step:
         logger.info('=== Reads mapping against ref db ===')
-
-        cmd_line = sortmerna_bin + ' --ref ' + clustered_ref_db_filepath
-        cmd_line += ' --workdir ' + sortmerna_reads_workdir
-        cmd_line += ' --idx-dir ' + clustered_ref_db_smr_idx_dir
-        # SortMeRNA v7 accepts two separate read files.  ``--paired_in`` keeps
-        # complete pairs in its aligned FASTQ output, and ``--out2`` keeps the
-        # pairs as separate R1/R2 files (``<aligned>_fwd`` / ``<aligned>_rev``).
-        cmd_line += ' --reads ' + args.forward + ' --reads ' + args.reverse
-        cmd_line += ' --paired_in --out2'
-        cmd_line += ' --aligned ' + sortme_output_basepath
-        cmd_line += ' --fastx --sam --blast 1'
-        cmd_line += ' --zip-out true'
-        cmd_line += ' --num_alignments ' + str(args.best)
-        cmd_line += ' -e {0:.2e}'.format(args.evalue)
-        cmd_line += ' --threads ' + str(args.cpu)
-        if args.verbose:
-            cmd_line += ' -v '
 
         # Set t0
         t0_wall = time.time()
 
-        runner.logged_check_call(cmd_line, verbose=args.verbose)
+        # Reuses a complete mapping of the same inputs; otherwise clears any
+        # partial or outdated SortMeRNA output and run state, then maps.
+        (sortme_output_forward_filepath, sortme_output_reverse_filepath,
+         sortme_output_sam_filepath) = sortmerna_step.run(
+            cmd_line, sortmerna_reads_workdir, sortme_output_basepath,
+            mapping_inputs, mapping_outputs, run_options, verbose=args.verbose,
+            prepare=lambda: sortmerna_index_options(
+                clustered_ref_db_filepath, clustered_ref_db_smr_idx_dir,
+                sortmerna_reads_workdir, 'clustered ref db'))
 
         # Output running time
         logger.info('Reads mapping completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
-
-    sortme_output_forward_filepath = find_sortmerna_output(
-        sortme_output_basepath + '_fwd', ('.fq', '.fastq'))
-    sortme_output_reverse_filepath = find_sortmerna_output(
-        sortme_output_basepath + '_rev', ('.fq', '.fastq'))
-    sortme_output_sam_filepath = find_sortmerna_output(
-        sortme_output_basepath, ('.sam',))
+    else:
+        try:
+            (sortme_output_forward_filepath, sortme_output_reverse_filepath,
+             sortme_output_sam_filepath) = sortmerna_step.completed_outputs(
+                cmd_line, sortmerna_reads_workdir, sortme_output_basepath, mapping_inputs,
+                mapping_outputs)
+        except sortmerna_step.IncompleteStepError as error:
+            logger.fatal('%s. Resume from the read mapping step (--resume_from reads_mapping) '
+                         'to redo it.', error)
+            sys.exit('Incomplete read mapping output')
 
     # Expose the selected read pairs under stable names (also the output of
     # --filter_only): <out_dir>/marker_reads_R1.fq[.gz] and _R2.
@@ -1416,17 +1424,21 @@ def main():
         cmd_line = sortmerna_bin
         cmd_line += ' --ref ' + complete_ref_db_filepath
         cmd_line += ' --workdir ' + sortmerna_scaffolding_workdir
-        cmd_line += ' --idx-dir ' + complete_ref_db_smr_idx_dir
         cmd_line += ' --reads ' + contigs_filepath
         cmd_line += ' --aligned ' + scaff_sortme_output_basepath
         cmd_line += ' --sam --blast 1'
-        cmd_line += ' --num_alignments 0 '
+        cmd_line += ' --num_alignments 0'
         cmd_line += ' -e {0:.2e}'.format(scaff_evalue)
-        cmd_line += ' --threads ' + str(args.cpu)
-        if args.verbose:
-            cmd_line += ' -v '
+        run_options = ' --threads ' + str(args.cpu) + (' -v' if args.verbose else '')
 
-        runner.logged_check_call(cmd_line, verbose=args.verbose)
+        # Contigs are rebuilt when resuming from an earlier step, so a
+        # previous mapping only counts if it was made from these contigs.
+        sortmerna_step.run(cmd_line, sortmerna_scaffolding_workdir, scaff_sortme_output_basepath,
+                           [contigs_filepath, complete_ref_db_filepath],
+                           [('', ('.sam',)), ('', ('.blast',))], run_options, verbose=args.verbose,
+                           prepare=lambda: sortmerna_index_options(
+                               complete_ref_db_filepath, complete_ref_db_smr_idx_dir,
+                               sortmerna_scaffolding_workdir, 'complete ref db'))
 
         # Output running time
         logger.info('Contig mapping completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
