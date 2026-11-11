@@ -288,8 +288,8 @@ def test_resume_past_an_incomplete_read_mapping_is_a_clear_error(resumable_run, 
     assert '--resume_from reads_mapping' in log
 
 
-# SortMeRNA reference index: prebuilt by matam_db_preprocessing.py, or built by
-# matam_assembly.py when the database was made with --skip_index.
+# SortMeRNA reference index: prebuilt by matam_db_preprocessing.py, or, with
+# --no_require_index, built by matam_assembly.py when the database was made with --skip_index.
 PREBUILT = 'using the prebuilt index'
 BUILT_IN_DB = 'Building it there now; later runs will reuse it'
 BUILT_IN_RUN = 'the database directory is not writable. Building a private index for this run'
@@ -311,12 +311,12 @@ def test_unindexed_writable_db_is_indexed_in_place_once(tmp_path):
     assert not idx_dir.exists()
     forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING, gz=True)
 
-    code, log = _matam(forward, reverse, db, tmp_path / 'out1', '--filter_only')
+    code, log = _matam(forward, reverse, db, tmp_path / 'out1', '--filter_only', '--no_require_index')
     assert code == 0, log[-4000:]
     assert BUILT_IN_DB in log
     assert (idx_dir / 'matam_index.json').is_file()
 
-    code, log = _matam(forward, reverse, db, tmp_path / 'out2', '--filter_only')
+    code, log = _matam(forward, reverse, db, tmp_path / 'out2', '--filter_only', '--no_require_index')
     assert code == 0, log[-4000:]
     assert PREBUILT in log and BUILT_IN_DB not in log
     assert (fastq_records(tmp_path / 'out1' / 'marker_reads_R1.fq.gz')
@@ -340,7 +340,7 @@ def test_unindexed_read_only_db_gives_the_same_assembly_with_private_indexes(pe_
     for path in [db_dir] + [p for p in db_dir.iterdir() if p.is_dir()]:
         path.chmod(0o555)
     try:
-        summary, log = run_matam(base, db, 'casava', 'readonly_db', return_log=True)
+        summary, log = run_matam(base, db, 'casava', 'readonly_db', '--no_require_index', return_log=True)
     finally:
         for path in [db_dir] + [p for p in db_dir.iterdir() if p.is_dir()]:
             path.chmod(0o755)
@@ -353,3 +353,60 @@ def test_unindexed_read_only_db_gives_the_same_assembly_with_private_indexes(pe_
     # Same assembly as with the prebuilt indexes (same indexing parameters).
     assert summary['scaffold_sequences'] == pe_runs['casava']['scaffold_sequences']
     assert summary['abundance'] == pe_runs['casava']['abundance']
+
+
+# Default (no --no_require_index): use only the prebuilt indexes, else stop before any step.
+REQUIRE_ERROR = 'No usable prebuilt SortMeRNA index (see --no_require_index)'
+
+
+def test_by_default_only_the_prebuilt_indexes_are_used(pe_workspace):
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(base / 'reads_require', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+    code, log = _matam(forward, reverse, db, base / 'out_require')
+    assert code == 0, log[-4000:]
+    assert 'SortMeRNA index of the clustered ref db: ' + PREBUILT in log
+    assert 'SortMeRNA index of the complete ref db: ' + PREBUILT in log
+    assert BUILT_IN_DB not in log and BUILT_IN_RUN not in log
+    assert (base / 'out_require' / 'final_assembly.fa').exists()
+
+
+@pytest.mark.parametrize('extra', [[], ['--filter_only']])
+def test_by_default_an_unindexed_db_stops_the_run_before_any_step(tmp_path, extra):
+    db = build_mini_db(tmp_path / 'db', extra_args=['--skip_index'])
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+    before = _tree(db.parent)
+
+    code, log = _matam(forward, reverse, db, tmp_path / 'out', *extra)
+
+    assert code != 0
+    assert REQUIRE_ERROR in log
+    assert 'index_ref_db.py -i {}'.format(db) in log
+    assert '=== Reads mapping' not in log and '=== Input' not in log
+    assert not (tmp_path / 'out' / 'sortmerna_reads_mapping').exists()
+    assert _tree(db.parent) == before            # nothing indexed in the db
+
+
+def test_by_default_the_scaffolding_index_is_checked_before_the_read_mapping(tmp_path):
+    db = build_mini_db(tmp_path / 'db')
+    shutil.rmtree(str(db) + '.complete.smr')     # only the complete db (scaffolding) unindexed
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+
+    code, log = _matam(forward, reverse, db, tmp_path / 'out')
+    assert code != 0 and REQUIRE_ERROR in log
+    assert 'complete ref db' in log and '=== Reads mapping' not in log
+
+    # --filter_only maps against the clustered db only.
+    code, log = _matam(forward, reverse, db, tmp_path / 'out_filter', '--filter_only')
+    assert code == 0, log[-4000:]
+    assert (tmp_path / 'out_filter' / 'marker_reads_R1.fq.gz').exists()
+
+
+def test_index_ref_db_makes_an_unindexed_db_usable(tmp_path):
+    db = build_mini_db(tmp_path / 'db', extra_args=['--skip_index'])
+    subprocess.run([sys.executable, str(SCRIPTS_DIR / 'index_ref_db.py'), '-i', str(db),
+                    '--max_memory', '2000'], check=True, env=tool_env(), capture_output=True)
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+
+    code, log = _matam(forward, reverse, db, tmp_path / 'out', '--filter_only')
+    assert code == 0, log[-4000:]
+    assert PREBUILT in log

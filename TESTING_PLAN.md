@@ -610,6 +610,47 @@ Before the change it failed: 1,457 vs 2,914 nodes.
     - discarded `--clustered_ref` centroids, including one not in the input;
     - other domains.
 
+### 18. [x] Pipelines silently index an unindexed database in every job (MarkerMAG-nf)
+- Without a usable prebuilt index, `sortmerna_index.ensure` builds one: in the
+  db directory if writable (shared, under a `flock`), otherwise privately in
+  the run. A MarkerMAG-nf run on an unindexed SILVA db (read-only, or where
+  `flock` fails, e.g. some Lustre mounts) therefore indexes it in every
+  MATAM_FILTER and MATAM_ASSEMBLE task (samples x 7 depths, ~2.5-3 h each),
+  with only a log warning.
+- **Fixed 2026-11-11** (first as an opt-in `--require_index`, then made the
+  default at the user's request):
+  - `matam_assembly.py` uses only the db's prebuilt indexes by default
+    (`sortmerna_index.prebuilt`: record check, or adoption of a record-less
+    index). It never builds one and takes no lock. Every index the run needs
+    (clustered; complete unless `--filter_only`) is checked before any step.
+    Otherwise it exits 1, giving the reason and the `index_ref_db.py -i <db>`
+    command to run. `--no_require_index` restores building on first use (in
+    the db if writable, else in the run). `sortmerna_index.ensure` defaults
+    to `require=True`.
+  - `build.py` links `index_ref_db.py` into `bin/`. `--skip_index` help, log
+    and README now say an index must be added before assembly.
+  - MarkerMAG-nf: the wrappers never pass `--no_require_index`.
+    `resolve_matam_db_prefix` stops the workflow before any task when either
+    index has neither a MATAM record nor SortMeRNA index statistics (legacy,
+    adopted by MATAM).
+- **Tests:**
+  - `test_sortmerna_index.py`: by default the prebuilt index is used without
+    a lock; a missing, stale or other-parameter index is never built; a
+    record-less index is adopted; a missing fasta is reported. Build-path
+    tests pass `require=False`.
+  - `test_functional_pe.py`: by default runs on prebuilt indexes, stops
+    before any step on an unindexed db (full and `--filter_only`), and checks
+    the scaffolding index before the read mapping; `index_ref_db.py` makes a
+    db usable; the build-on-first-use tests pass `--no_require_index`.
+  - MarkerMAG-nf: `test_python314_and_paired_reads.py` (neither wrapper
+    passes `--no_require_index`).
+  - Checked by hand: Nextflow 26.10.5 `-preview` against 5 db states (indexed
+    as dir and prefix, legacy, unindexed, complete index missing); the real
+    wrappers on the indexed SILVA-subset db (OK) and an unindexed db (filter
+    exits 1 at once, nothing indexed).
+- **Not addressed:** with `--no_require_index`, a failing `flock` on the
+  run's own work directory (the private-index fallback) is not caught.
+
 ### F1. [x] Follow-up: over half of the pairs are discarded before SGA
 - With correct mate identity, mates often fall into different graph
   components. The "same-component pair" rule then discards the pair:
@@ -741,3 +782,5 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | #17 | Lost taxa judged by sequence similarity, not names: each discarded sequence's nearest remaining reference (vsearch, >=90% query coverage), close relative if >= `--close_relative_id` (default clustering identity). 10k subset: 0/6 cleaning removals and 20/23 dropped centroids without a close relative (sparse subset). Suite 183 passed, 6 skipped |
 | 2026-11-11 | #14 | `--contigs_binning` evaluated for MarkerMAG-nf on a simulated SILVA-subset community (3 replicates): resolves >=1%-apart strains (3-4/4 vs 0-1/4) but halves exact sequences, adds mosaics and error duplicates, and loses novel 16S under 1200 bp. MarkerMAG-nf's wrapper would get no scaffolds with it (file renamed). Kept off; #14 fix (`LN:2147483647`) verified in a scratch copy only |
 | 2026-11-11 | #14 | Fixed: `compute_contigs_compatibility.py` writes `LN:2147483647` instead of `LN:9999999999`. Untested by design: no test added or planned |
+| 2026-11-11 | #18 | `--require_index` (prebuilt indexes only, checked before any step, no lock); `index_ref_db.py` in `bin/`; MarkerMAG-nf passes it and checks the db indexes before any task. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` on 5 db states |
+| 2026-11-11 | #18 | Inverted: prebuilt indexes are required by default (`sortmerna_index.ensure(require=True)`); `--no_require_index` builds them on first use; MarkerMAG-nf wrappers rely on the default. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` and real wrappers re-checked |

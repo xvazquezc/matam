@@ -167,12 +167,20 @@ where `$DBDIR` is the directory used to store the database.
 This also builds the SortMeRNA indexes of the database (`<prefix>.complete.smr/idx`,
 `<prefix>.clustered.smr/idx`), with `-m` set by `--max_memory`. Indexing is single-threaded:
 for a full SILVA SSU NR99 database, expect about 2-2.5 h and 15 GB for the complete index
-and 45 min and 6.5 GB for the clustered one. Add `--skip_index` to leave it out:
-`matam_assembly.py` then builds each index the first time it needs it, in the database
-directory if it is writable (once, shared by later runs; concurrent runs wait for it), or
-otherwise inside the run, in every run. Each index carries a record of the fasta and
-indexing parameters it was built from (`matam_index.json`); an index that does not match
-its fasta or the database's parameters is rebuilt rather than used.
+and 45 min and 6.5 GB for the clustered one. Each index carries a record of the fasta and
+indexing parameters it was built from (`matam_index.json`).
+
+`matam_assembly.py` uses only these prebuilt indexes. If an index the run needs is missing,
+incomplete, or doesn't match its fasta or the database's parameters, it stops with an error
+before any step. This stops, for example, every job of a pipeline from spending hours on
+indexing. It takes no file lock, so it also works on filesystems without lock support. To
+index an existing database (e.g. one made with `--skip_index`), run
+`index_ref_db.py -i $DBDIR/<prefix> --max_memory 10000`.
+
+With `--no_require_index`, `matam_assembly.py` instead builds each missing or out-of-date
+index the first time it needs it. It builds it in the database directory if that is writable
+(once, shared by later runs; concurrent runs wait for it), otherwise inside the run, in
+every run.
 
 The clustered database (used for read mapping and the overlap graph) is made by clustering
 the references with vsearch at `--clustering_id_threshold` identity (default 0.95), which
@@ -211,7 +219,7 @@ When your database is ready, then you will be able to reconstruct your markers:
   `matam_assembly.py -d $DBDIR/prefix --forward reads_R1.fastq --reverse reads_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
     The taxonomic assignment is done with [RDP classifier](https://rdp.cme.msu.edu/) and the training model used by default is "16srrna"
 
-SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes stay under the database `.smr/idx` directories (or, for a read-only database without prebuilt indexes, in the SortMeRNA work directories of the run).
+SortMeRNA run state is stored in the MATAM output directory by default. Use `--workdir WORKDIR` to store it elsewhere; reference indexes stay under the database `.smr/idx` directories (or, with `--no_require_index` and a read-only database without prebuilt indexes, in the SortMeRNA work directories of the run).
 
 A run can be resumed with `--resume_from STEP`, or rerun into the same output directory.
 After each SortMeRNA mapping, MATAM records the command, inputs and outputs in a

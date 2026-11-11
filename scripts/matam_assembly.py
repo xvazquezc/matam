@@ -291,6 +291,15 @@ def parse_arguments():
                             default = 10000,
                             help = 'Maximum memory to use (in MBi). '
                                    'Default is %(default)s MBi')
+    # --no_require_index
+    group_perf.add_argument('--no_require_index',
+                            action = 'store_true',
+                            help = 'Build the SortMeRNA indexes of the database when they are '
+                                   'missing or out of date (in the database directory if '
+                                   'writable, otherwise inside this run), which takes hours '
+                                   'for SILVA. By default MATAM uses only the indexes prebuilt '
+                                   'by matam_db_preprocessing.py or index_ref_db.py, and stops '
+                                   'with an error before any step without them')
 
     # Reads mapping parameters
     group_mapping = parser.add_argument_group('Read mapping')
@@ -600,6 +609,8 @@ def print_intro(args):
     # Performance
     cmd_line += '--cpu {0} '.format(args.cpu)
     cmd_line += '--max_memory {0} '.format(args.max_memory)
+    if args.no_require_index:
+        cmd_line += '--no_require_index '
 
     # Read mapping
     cmd_line += '--best {0} '.format(args.best)
@@ -790,21 +801,46 @@ def main():
     sortmerna_scaffolding_workdir = os.path.join(args.workdir, 'sortmerna_scaffolding')
 
     def sortmerna_index_options(ref_fasta, db_idx_dir, step_workdir, label):
-        """Find or build the index of ref_fasta; return the SortMeRNA options to use it.
+        """Find (or build) the index of ref_fasta; return the SortMeRNA options to use it.
 
-        Uses the database's prebuilt index if it matches the fasta, otherwise
-        builds it, with the database's indexing parameters, in the database
-        directory (if writable) or in the step's work directory. '--index 0'
-        keeps SortMeRNA from building one itself.
+        Uses the database's prebuilt index if it matches the fasta; otherwise
+        stops, or with --no_require_index builds it, with the database's
+        indexing parameters, in the database directory (if writable) or in the
+        step's work directory. '--index 0' keeps SortMeRNA from building one itself.
         """
         try:
             idx_dir = sortmerna_index.ensure(
                 sortmerna_bin, ref_fasta, db_idx_dir, os.path.join(step_workdir, 'idx'),
-                verbose=args.verbose, label=label)
+                verbose=args.verbose, label=label, require=not args.no_require_index)
+        except sortmerna_index.IndexMissingError as error:
+            exit_without_index(error)
         except sortmerna_index.IndexBuildError as error:
             logger.fatal(str(error))
             sys.exit('SortMeRNA indexing failed')
         return ' --idx-dir ' + shlex.quote(idx_dir) + ' --index 0'
+
+    def exit_without_index(error):
+        logger.fatal('%s. Index the database first, e.g. with index_ref_db.py -i %s '
+                     '--max_memory %d (or remake it with matam_db_preprocessing.py without '
+                     '--skip_index), or run with --no_require_index to let MATAM build the '
+                     'index (hours for SILVA)',
+                     error, ref_db_basepath, args.max_memory)
+        sys.exit('No usable prebuilt SortMeRNA index (see --no_require_index)')
+
+    # Unless --no_require_index: check every index this run maps against before
+    # any step, so an unindexed database stops the run at once (not after the
+    # read mapping). The read mapping uses the clustered db, scaffolding the complete one.
+    if not args.no_require_index:
+        required_indexes = [('clustered ref db', clustered_ref_db_filepath,
+                             clustered_ref_db_smr_idx_dir)]
+        if not args.filter_only:
+            required_indexes.append(('complete ref db', complete_ref_db_filepath,
+                                     complete_ref_db_smr_idx_dir))
+        for label, ref_fasta, db_idx_dir in required_indexes:
+            try:
+                sortmerna_index.prebuilt(sortmerna_bin, ref_fasta, db_idx_dir, label)
+            except sortmerna_index.IndexMissingError as error:
+                exit_without_index(error)
 
     # Read mapping
     sortme_output_basename = input_fastq_basename

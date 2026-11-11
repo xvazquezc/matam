@@ -34,10 +34,18 @@ Safe builds
     record is complete. Builds are serialised with a lock file, so concurrent
     MATAM runs build a shared index once and never read a half-written one.
 
-:func:`ensure` finds or builds the index used by a mapping step:
+:func:`ensure` finds the index used by a mapping step. By default
+(``require=True``) it must be the prebuilt index in the database directory
+(``<db>.<kind>.smr/idx``): :func:`prebuilt` accepts it when it matches the
+fasta and the parameters (or adopts one without a record), and otherwise raises
+:class:`IndexMissingError`, without building anything or taking a lock. An
+unindexed database thus stops a run at once, instead of every run (e.g. every
+job of a pipeline) spending hours indexing it.
 
-1. the prebuilt index in the database directory (``<db>.<kind>.smr/idx``),
-   when it matches the fasta and the parameters;
+With ``require=False`` (matam_assembly.py ``--no_require_index``) a missing or
+unusable index is built instead:
+
+1. the prebuilt index, when usable, as above;
 2. otherwise, when the database directory is writable, it builds the index
    there once, for later runs too;
 3. otherwise (read-only database), it builds a private index inside the run
@@ -83,6 +91,10 @@ _version_cache = {}
 
 class IndexBuildError(Exception):
     """SortMeRNA failed to build an index."""
+
+
+class IndexMissingError(Exception):
+    """The database has no usable prebuilt index, and building one is not allowed."""
 
 
 def index_params(memory_mb=DEFAULT_MEMORY_MB):
@@ -379,15 +391,45 @@ def _writable(directory):
     return os.access(directory, os.W_OK | os.X_OK)
 
 
-def ensure(sortmerna_bin, ref_fasta, shared_idx_dir, local_idx_dir, verbose=False,
-           label='reference'):
-    """Return the directory of an index of ref_fasta, building one if needed.
+def prebuilt(sortmerna_bin, ref_fasta, shared_idx_dir, label='reference'):
+    """Return shared_idx_dir if it holds a usable index of ref_fasta; never builds one.
 
-    shared_idx_dir is the database's index (``<db>.<kind>.smr/idx``), used or
-    built there when possible; local_idx_dir is the run's private fallback.
-    Indexes are built with the database's parameters (:func:`db_params`).
-    Raises IndexBuildError if SortMeRNA fails.
+    The index must match the fasta and the database's parameters
+    (:func:`check`), or be an index without a MATAM record that
+    :func:`adopt` accepts. Takes no lock, so it also works where file locks
+    are not supported. Raises IndexMissingError (with the reason) otherwise.
     """
+    if not os.path.isfile(ref_fasta):
+        raise IndexMissingError('the {} fasta {} does not exist'.format(label, ref_fasta))
+    params = db_params(os.path.dirname(os.path.abspath(shared_idx_dir)))
+    usable, reason = check(shared_idx_dir, ref_fasta, sortmerna_bin, params)
+    if usable:
+        logger.info('SortMeRNA index of the %s: using the prebuilt index %s', label, shared_idx_dir)
+        return shared_idx_dir
+    if reason == NO_RECORD:
+        usable, reason = adopt(shared_idx_dir, ref_fasta, sortmerna_bin, params)
+        if usable:
+            logger.info('SortMeRNA index of the %s: using the prebuilt index %s, which has no '
+                        'MATAM record but matches the fasta and parameters', label, shared_idx_dir)
+            return shared_idx_dir
+    raise IndexMissingError('no usable prebuilt SortMeRNA index of the {} {} in {}: {}'.format(
+        label, ref_fasta, shared_idx_dir, reason))
+
+
+def ensure(sortmerna_bin, ref_fasta, shared_idx_dir, local_idx_dir, verbose=False,
+           label='reference', require=True):
+    """Return the directory of an index of ref_fasta.
+
+    shared_idx_dir is the database's index (``<db>.<kind>.smr/idx``). With
+    require=True (the default), only it is used (:func:`prebuilt`): nothing is
+    built, and IndexMissingError is raised when it is missing or unusable.
+    With require=False, a missing or unusable index is built: in
+    shared_idx_dir when possible, else in local_idx_dir (the run's private
+    fallback), with the database's parameters (:func:`db_params`); raises
+    IndexBuildError if SortMeRNA fails.
+    """
+    if require:
+        return prebuilt(sortmerna_bin, ref_fasta, shared_idx_dir, label)
     shared_dir = os.path.dirname(os.path.abspath(shared_idx_dir))
     params = db_params(shared_dir)
     usable, reason = check(shared_idx_dir, ref_fasta, sortmerna_bin, params)

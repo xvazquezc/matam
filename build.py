@@ -152,6 +152,8 @@ normally created by building the program. Default is %(default)s",
         matam_bin_dirpath = os.path.join(matam_root_dirpath, 'bin')
         cmd_line = 'ln -sf ' + \
             os.path.join(matam_scripts_dirpath, 'matam_*.py')
+        # index_ref_db.py indexes an existing db (matam_assembly.py requires prebuilt indexes).
+        cmd_line += ' ' + os.path.join(matam_scripts_dirpath, 'index_ref_db.py')
         cmd_line += ' ' + os.path.join(matam_root_dirpath, "index_default_ssu_rrna_db.py")
         cmd_line += ' ' + os.path.join(matam_bin_dirpath, '.')
         warning = 'A problem might have happened while creating links into bin dir. Check log above'

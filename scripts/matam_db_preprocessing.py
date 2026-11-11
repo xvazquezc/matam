@@ -102,9 +102,10 @@ def parse_arguments():
     group_perf.add_argument('--skip_index',
                             action = 'store_true',
                             help = 'Do not build the SortMeRNA indexes of the db. '
-                                   'matam_assembly.py then builds them on first use: '
-                                   'in the db directory if it is writable (once, '
-                                   'shared by later runs), otherwise in each run')
+                                   'matam_assembly.py needs them: index the db later with '
+                                   'index_ref_db.py, or run matam_assembly.py with '
+                                   '--no_require_index to build them on first use (in the db '
+                                   'directory if it is writable, otherwise in each run)')
 
     # Advanced parameters
     group_adv = parser.add_argument_group('Advanced parameters')
@@ -771,8 +772,9 @@ if __name__ == '__main__':
 
     # matam_assembly.py uses <db>.{complete,clustered}.smr/idx if its record
     # (written by sortmerna_index.build) matches the fasta and the indexing
-    # parameters, and otherwise builds the index itself with the parameters
-    # stored here (also with --skip_index); see sortmerna_index.py.
+    # parameters; otherwise it stops, or with --no_require_index builds the
+    # index itself with the parameters stored here (also with --skip_index);
+    # see sortmerna_index.py.
     index_params = sortmerna_index.index_params(args.max_memory)
     sortmerna_bin = Binary.assert_which('sortmerna')
 
@@ -796,8 +798,9 @@ if __name__ == '__main__':
             error_code += 1
             continue
         if args.skip_index:
-            logger.info('Not indexing {0} ref db (--skip_index); matam_assembly.py will build '
-                        'the index on first use'.format(label))
+            logger.info('Not indexing {0} ref db (--skip_index); index it with index_ref_db.py '
+                        'before running matam_assembly.py (or run it with --no_require_index '
+                        'to build the index on first use)'.format(label))
             continue
         logger.info('Indexing {0} ref db'.format(label))
         t0_wall = time.time()

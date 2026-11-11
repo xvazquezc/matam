@@ -161,7 +161,7 @@ def test_an_index_without_a_matam_record_is_checked_against_sortmerna_statistics
     caplog.set_level(logging.INFO, logger='sortmerna_index')
     local = tmp_path / 'run' / 'idx'
 
-    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(idx_dir)
+    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local), require=False) == str(idx_dir)
 
     assert 'no MATAM record but matches the fasta and parameters' in caplog.text
     assert 'Building' not in caplog.text and not local.exists()
@@ -175,7 +175,7 @@ def test_a_split_index_from_an_older_matam_is_adopted_with_its_parameters(db, tm
     ref, idx_dir = db
     legacy_index(ref, idx_dir, '-m', '0.1')   # 25 kB fasta: 3 parts
     assert 'part_num: 3' in next(idx_dir.glob('*.idx_stats.yaml')).read_text()
-    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'idx')) == str(idx_dir)
+    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'idx'), require=False) == str(idx_dir)
     assert json.loads((idx_dir / 'matam_index.json').read_text())['params'] == LEGACY
 
 
@@ -213,7 +213,7 @@ def test_an_index_without_a_record_that_does_not_match_is_rebuilt(db, tmp_path, 
         pos.write_bytes(pos.read_bytes()[:100])
     caplog.set_level(logging.INFO, logger='sortmerna_index')
 
-    sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'run' / 'idx'))
+    sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'run' / 'idx'), require=False)
 
     assert reason in caplog.text and 'Building it there now' in caplog.text
     assert 'adopted' not in json.loads((idx_dir / 'matam_index.json').read_text())
@@ -242,13 +242,13 @@ def test_ensure_builds_a_missing_index_in_a_writable_db_once(db, tmp_path, caplo
     local = tmp_path / 'run' / 'sortmerna_reads_mapping' / 'idx'
     caplog.set_level(logging.INFO, logger='sortmerna_index')
 
-    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(idx_dir)
+    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local), require=False) == str(idx_dir)
     assert 'no usable prebuilt index' in caplog.text and 'Building it there now' in caplog.text
     # Built with the database's parameters.
     assert json.loads((idx_dir / 'matam_index.json').read_text())['params'] == PARAMS
     caplog.clear()
 
-    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(idx_dir)
+    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local), require=False) == str(idx_dir)
     assert 'using the prebuilt index' in caplog.text and 'Building' not in caplog.text
     assert not local.exists()
 
@@ -259,7 +259,7 @@ def test_ensure_rebuilds_a_stale_index_in_place(db, tmp_path, caplog):
     ref.write_text(''.join(ref.read_text().splitlines(True)[:8]))
     caplog.set_level(logging.INFO, logger='sortmerna_index')
 
-    sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'local' / 'idx'))
+    sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(tmp_path / 'local' / 'idx'), require=False)
 
     assert 'size differs' in caplog.text
     assert check(ref, idx_dir, LEGACY) == (True, '')
@@ -276,13 +276,13 @@ def test_ensure_builds_a_private_index_in_the_run_when_the_db_is_read_only(db, t
     os.chmod(str(idx_dir.parent), stat.S_IRUSR | stat.S_IXUSR)
     os.chmod(str(db_dir), stat.S_IRUSR | stat.S_IXUSR)
     try:
-        assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(local)
+        assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local), require=False) == str(local)
         assert 'database directory is not writable' in caplog.text
         assert sorted(str(p) for p in db_dir.rglob('*')) == before
         assert json.loads((local / 'matam_index.json').read_text())['params'] == PARAMS
         caplog.clear()
         # A rerun of the same run reuses its private index.
-        assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(local)
+        assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local), require=False) == str(local)
         assert 'using the index built earlier for this run' in caplog.text
     finally:
         os.chmod(str(db_dir), 0o755)
@@ -293,7 +293,7 @@ CONCURRENT_ENSURE = textwrap.dedent('''\
     import sys
     sys.path.insert(0, sys.argv[1])
     import sortmerna_index
-    print(sortmerna_index.ensure(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]))
+    print(sortmerna_index.ensure(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], require=False))
     ''')
 
 
@@ -317,3 +317,59 @@ def test_concurrent_runs_build_a_shared_index_once(db, tmp_path):
     assert [out.strip() for out, _, _ in results] == [str(idx_dir)] * 3
     assert calls.read_text() == 'build\n'
     assert check(ref, idx_dir, LEGACY) == (True, '')
+
+
+# require=True (the default; matam_assembly.py without --no_require_index):
+# the prebuilt index or an error.
+
+def test_by_default_the_prebuilt_index_is_used_without_taking_a_lock(db, tmp_path, monkeypatch):
+    ref, idx_dir = db
+    built(ref, idx_dir)
+    sortmerna_index.write_params(str(idx_dir.parent), PARAMS)
+    (idx_dir.parent / sortmerna_index.LOCK_NAME).unlink()
+
+    def no_lock(directory):
+        raise AssertionError('requiring the index must not lock ' + directory)
+    monkeypatch.setattr(sortmerna_index, 'locked', no_lock)
+    local = tmp_path / 'run' / 'idx'
+
+    assert sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local)) == str(idx_dir)
+    assert not local.exists()
+    assert not (idx_dir.parent / sortmerna_index.LOCK_NAME).exists()
+
+
+@pytest.mark.parametrize('state, reason', [
+    ('missing', 'no index'),
+    ('stale', 'the fasta changed since the index was built (size differs)'),
+    ('other params', 'the index was built with other parameters'),
+])
+def test_by_default_a_missing_or_unusable_index_is_never_built(db, tmp_path, state, reason):
+    ref, idx_dir = db
+    sortmerna_index.write_params(str(idx_dir.parent), PARAMS)
+    if state != 'missing':
+        built(ref, idx_dir, PARAMS if state == 'stale' else dict(PARAMS, m=3000))
+    if state == 'stale':
+        ref.write_text(''.join(ref.read_text().splitlines(True)[:4]))
+    before = sorted(str(p) for p in ref.parent.rglob('*'))
+    local = tmp_path / 'run' / 'idx'
+
+    with pytest.raises(sortmerna_index.IndexMissingError) as error:
+        sortmerna_index.ensure(SORTMERNA, str(ref), str(idx_dir), str(local),
+                               label='clustered ref db')
+
+    assert reason in str(error.value) and 'clustered ref db' in str(error.value)
+    assert sorted(str(p) for p in ref.parent.rglob('*')) == before   # nothing built or changed
+    assert not local.exists()
+
+
+def test_require_adopts_an_index_without_a_record(db):
+    ref, idx_dir = db
+    legacy_index(ref, idx_dir)
+    assert sortmerna_index.prebuilt(SORTMERNA, str(ref), str(idx_dir)) == str(idx_dir)
+    assert 'adopted' in json.loads((idx_dir / 'matam_index.json').read_text())
+
+
+def test_require_reports_a_missing_fasta(tmp_path):
+    with pytest.raises(sortmerna_index.IndexMissingError, match='does not exist'):
+        sortmerna_index.prebuilt(SORTMERNA, str(tmp_path / 'db.complete.fasta'),
+                                 str(tmp_path / 'db.complete.smr' / 'idx'), 'complete ref db')
