@@ -528,3 +528,22 @@ def test_input_out_of_step_stops_the_run_before_mapping_without_verbose(pe_works
     assert completed.returncode != 0
     assert 'Invalid FASTQ input' in log and 'not in step: read 101' in log
     assert not (tmp_path / 'out' / 'sortmerna_reads_mapping').exists()
+
+
+def test_taxonomic_assignment_and_krona(pe_workspace, tmp_path):
+    # Ported from the old SILVA 128 functional test (always skipped: the
+    # database could not be downloaded any more), on the mini database.
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(base / 'reads_taxonomy', 'casava', every=PAIR_SUBSAMPLING)
+    out_dir = tmp_path / 'out'
+    code, log = _matam(forward, reverse, db, out_dir, '--perform_taxonomic_assignment',
+                       keep_tmp=False)
+    assert code == 0, log[-4000:]
+    scaffolds = [header.split()[0] for header, _ in read_fasta(out_dir / 'final_assembly.fa')]
+    assert scaffolds
+    # One RDP classification per scaffold.
+    rdp_ids = [line.split('\t')[0] for line in (out_dir / 'rdp.tab').read_text().splitlines()
+               if line.strip()]
+    assert sorted(rdp_ids) == sorted(scaffolds)
+    assert (out_dir / 'krona.tab').read_text().strip()
+    assert '<html' in (out_dir / 'krona.html').read_text().lower()

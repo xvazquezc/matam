@@ -13,16 +13,13 @@ The related article of this method is available [here](https://doi.org/10.1093/b
 - [Table of contents](#table-of-contents)
 - [1. Hardware requirements](#1-hardware-requirements)
 - [2. Installation](#2-installation)
-  - [2.1 Current development version](#21-current-development-version)
-  - [2.2 Published Conda package](#22-published-conda-package)
-  - [2.3 Published Docker image](#23-published-docker-image)
 - [3. Run MATAM](#3-run-matam)
   - [3.1 Input data](#31-input-data)
   - [3.2 Database preparation (clustering \& indexation)](#32-database-preparation-clustering--indexation)
-    - [3.2.1 Provided database](#321-provided-database)
+    - [3.2.1 SILVA database](#321-silva-database)
     - [3.2.2 Custom database](#322-custom-database)
   - [3.3 De-novo assembly](#33-de-novo-assembly)
-  - [3.4 Example with default database and provided dataset](#34-example-with-default-database-and-provided-dataset)
+  - [3.4 Example with the provided dataset](#34-example-with-the-provided-dataset)
 - [4. Samples comparaison](#4-samples-comparaison)
 - [5. Release versioning](#5-release-versioning)
 
@@ -41,14 +38,9 @@ hardware configuration.
 
 # <a id="installation"></a>2. Installation
 
-The current development version must be installed from this repository. The
-published Bioconda package and Docker image contain the upstream MATAM release,
-not the changes maintained in this fork.
-
-## <a id="matam-from-source-code"></a>2.1 Current development version
-
-Install Conda or Miniconda first. Then clone this repository, create its Conda
-environment, and compile the two native executables:
+MATAM is installed from source. Install Conda or Miniconda first, then clone
+this repository, create its Conda environment, and compile the two native
+executables:
 
 ```bash
 git clone --recursive https://github.com/xvazquezc/matam.git
@@ -85,35 +77,6 @@ every run log. On the commit tagged `v<VERSION>` it is the number in the
 `VERSION` file. On any other commit the short commit hash is added
 (`<VERSION>+<hash>`). While `VERSION` is empty, the version is just the hash.
 
-## <a id="matam-with-conda"></a>2.2 Published Conda package
-
-[![Anaconda-Server Badge](https://anaconda.org/bioconda/matam/badges/version.svg)](https://anaconda.org/bioconda/matam)
-
-The upstream release, without this fork's development changes, is available as
-`bioconda::matam`.
-
-```bash
-conda install -c conda-forge -c bioconda bioconda::matam
-```
-
-## <a id="matam-in-docker"></a>2.3 Published Docker image
-
-The published BioContainer also contains the upstream release. To retrieve it,
-run:
-
-`docker pull quay.io/biocontainers/matam:{release_version}`
-
-Then all the commands used in this README will be available as:
-
-`docker run -v host_directory:/workdir quay.io/biocontainers/matam:{release_version} CMD`
-
-Noticed that you have to specify a docker volume to share data between the host and the container and use this workdir for your analysis. Otherwise your data will be lost when exiting the container.
-
-Finally, if you prefer an interactive session with the container, run:
-
-`docker run -it quay.io/biocontainers/matam:{release_version}`
-
-
 # <a id="run-matam"></a>3. Run MATAM
 
 MATAM accepts paired reads only. Supply forward and reverse FastQ files with
@@ -145,26 +108,33 @@ naming. The results do not depend on the naming convention.
 Each read pair is assembled in every graph component that holds one of its mates.
 How pairs are handled from mapping to assembly, and how the results compare with
 upstream MATAM, is documented in
-[eval_and_release/paired_end_assembly](eval_and_release/paired_end_assembly/README.md).
+[evaluation/paired_end_assembly](evaluation/paired_end_assembly/README.md).
 
 ## <a id="database-preparation"></a>3.2 Database preparation (clustering & indexation)
 
 SortMeRNA 6 introduced an index format that is incompatible with indexes created by SortMeRNA 4 or 5. When upgrading, delete the `<prefix>.complete.smr` and `<prefix>.clustered.smr` directories, then rerun `index_ref_db.py` or `matam_db_preprocessing.py` before assembly.
 
-### <a id="provided-database"></a>3.2.1 Provided database
+### <a id="silva-database"></a>3.2.1 SILVA database
 
-By default, MATAM provides a SSU rRNA reference database where the clusterisation step has already been done (i.e. the sequences sharing 95% of identity have been clustered with [Sumaclust](https://git.metabarcoding.org/obitools/sumaclust/wikis/home)).  
-The  [FASTA](https://www.arb-silva.de/fileadmin/silva_databases/release_128/Exports/SILVA_128_SSURef_Nr99_tax_silva_trunc.fasta.gz) file used for this database comes from [SILVA 128 release](https://www.arb-silva.de/documentation/release-128/).
+MATAM has no bundled database (the SILVA 128 database of upstream MATAM is no
+longer downloadable). Build one from the SSU Ref NR99 sequences of the current
+[SILVA release](https://www.arb-silva.de/):
 
-To use the default SSU rRNA reference database, run the following command:
+```bash
+wget https://www.arb-silva.de/fileadmin/silva_databases/release_138_2/Exports/SILVA_138.2_SSURef_NR99_tax_silva.fasta.gz
+gunzip SILVA_138.2_SSURef_NR99_tax_silva.fasta.gz
+matam_db_preprocessing.py -i SILVA_138.2_SSURef_NR99_tax_silva.fasta -d $DBDIR \
+    --out_db_name SILVA_138.2_NR95 --cpu 8 --max_memory 10000 -v
+```
 
-`index_default_ssu_rrna_db.py -d $DBDIR --max_memory 10000`
-
-where `$DBDIR` is the directory used to store the database.
+where `$DBDIR` is the directory used to store the database. The database prefix,
+given to `matam_assembly.py -d`, is then `$DBDIR/SILVA_138.2_NR95`. Clustering and
+indexing take a few hours for SILVA NR99 (details below).
 
 ### <a id="custom-database"></a>3.2.2 Custom database
 
-If the provided database does not fulfill your needs, you can prepare a custom database of your own by running the following command:
+Any reference fasta with SILVA-formatted headers (`>ID taxonomy`) can be prepared
+the same way:
 
 `matam_db_preprocessing.py -i ref_db.fasta -d $DBDIR --cpu 4 --max_memory 10000 -v`
 
@@ -246,22 +216,24 @@ temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
 FASTQ naming, with or without a `.gz` suffix.
 
 where `$DBDIR` is the database directory and `prefix` is the common prefix used to name the database files.
-For example, with the default database, the prefix is SILVA_128_SSURef_NR95.  
+For example, for the database built in [3.2.1](#silva-database), the prefix is SILVA_138.2_NR95.
 
 
-## <a id="example-with-default-database-and-provided-dataset"></a>3.4 Example with default database and provided dataset
+## <a id="example-with-the-provided-dataset"></a>3.4 Example with the provided dataset
 
-1. Retrieve the example dataset: [16 bacterial species simulated dataset](examples/16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq)
+1. The example dataset, [16 bacterial species simulated dataset](examples/16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq),
+   is a single interleaved file. Split it into R1/R2 files:
 
-  `wget https://raw.githubusercontent.com/bonsai-team/matam/master/examples/16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq`
+   ```bash
+   paste - - - - - - - - < examples/16sp_simulated_dataset/16sp.art_HS25_pe_100bp_50x.fq \
+       | awk -F'\t' '{print $1"\n"$2"\n"$3"\n"$4 > "16sp_R1.fastq"; print $5"\n"$6"\n"$7"\n"$8 > "16sp_R2.fastq"}'
+   ```
 
-2. Getting and indexing default SSU rRNA reference database
+2. Build the SILVA database ([3.2.1](#silva-database)).
 
-  `index_default_ssu_rrna_db.py -d $DBDIR --max_memory 10000`
+3. De-novo assembly and taxonomic assignment:
 
-3. De-novo assembly
-
-  `matam_assembly.py -d $DBDIR/SILVA_128_SSURef_NR95 --forward 16sp_R1.fastq --reverse 16sp_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
+   `matam_assembly.py -d $DBDIR/SILVA_138.2_NR95 --forward 16sp_R1.fastq --reverse 16sp_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
 
 
 # <a id="samples-comparaison"></a>4. Samples comparaison

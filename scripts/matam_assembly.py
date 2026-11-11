@@ -88,10 +88,7 @@ program_filename = os.path.basename(sys.argv[0])
 matam_assembly_bin = os.path.realpath(sys.argv[0])
 matam_bin_dir = os.path.dirname(matam_assembly_bin)
 matam_root_dir = os.path.dirname(matam_bin_dir)
-matam_db_dir = os.path.join(matam_root_dir, 'db')
 
-# Set default ref db
-default_ref_db = os.path.join(matam_db_dir, 'SILVA_128_SSURef_NR95')
 
 # Pipeline steps, in order (--resume_from and --stop_after)
 STEPS = ('reads_mapping', 'alignments_filtering', 'overlap_graph_building',
@@ -262,8 +259,9 @@ def parse_arguments():
                             action = 'store',
                             metavar = 'DBPATH',
                             type = str,
-                            help = 'MATAM ref db. '
-                                   'Default is $MATAM_DIR/db/SILVA_128_SSURef_NR95')
+                            required = True,
+                            help = 'MATAM ref db prefix, as made (and indexed) by '
+                                   'matam_db_preprocessing.py')
     # -o / --out_dir
     group_main.add_argument('-o', '--out_dir',
                             action = 'store',
@@ -576,9 +574,6 @@ def parse_arguments():
         args.verbose = True
         args.keep_tmp = True
 
-    # Set default ref db
-    if not args.ref_db:
-        args.ref_db = default_ref_db
 
     # Set default output dir
     if not args.out_dir:

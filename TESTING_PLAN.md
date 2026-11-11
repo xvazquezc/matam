@@ -14,7 +14,9 @@ dependencies into `testmatam` is allowed.
 `binary_utils`, `compute_abundance.abundance_calculation`, `krona`, `rdp`,
 `components_assembly` pair extraction, SortMeRNA paired contract and
 subsampling equivalence, `ovgraphbuild` threading/sharding, and one end-to-end
-functional run (`tests/test_functional.py`).
+functional run (`tests/test_functional.py`; it needed the SILVA 128 database,
+which can no longer be downloaded, so it was always skipped; removed 2026-11-11,
+its checks ported to `test_functional_pe.py::test_taxonomic_assignment_and_krona`).
 
 ---
 
@@ -300,9 +302,9 @@ Before the change it failed: 1,457 vs 2,914 nodes.
   script was never run; that grep matched only the filename, not the variable.*
 - **Fix idea:** `dtype=int`. Add a unit test for `compute_ref_coverage`.
   NumPy is not yet installed in `testmatam`.
-- **Note:** `tests/test_functional.py` passes `--coverage_threshold 2000`, so
-  it would hit this crash. It's skipped locally only because the SILVA DB is
-  absent.
+- **Note:** `tests/test_functional.py` (since removed) passed
+  `--coverage_threshold 2000`, so it would have hit this crash. It was skipped
+  only because the SILVA DB was absent.
 - **Fixed 2026-11-06** (`dtype=int`). **Tests:**
   `test_runner_and_coverage.py::test_reference_coverage_counts_each_aligned_reference_position`,
   and `test_functional_pe.py::test_coverage_subsampling_keeps_reads_whole_and_naming_independent` (end to end).
@@ -872,3 +874,5 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | #20 | MATAM `--seed 0` honoured and `--seed` logged; MarkerMAG-nf `--matam_seed` (default 42) passed to MATAM, runs now reproducible (3 identical runs). MATAM suite 209 passed, 6 skipped; MarkerMAG-nf 16 passed |
 | 2026-11-11 | Tier 3 | FASTQ input validated every run in one pass: structure, truncation, read counts, R1/R2 order, Phred+33 over all reads; batch + bytes.translate + per-file threads (4.8 s gz for 2 M pairs, old -v checks 4.6 s). Suite 277 passed, 6 skipped |
 | 2026-11-11 | Tier 3 | Quality encoding checked on the first 1,000 pairs only (structure and pairing still on every read): 1.9 s plain / 4.4 s gz for 2 M pairs. Suite 279 passed, 6 skipped |
+| 2026-11-11 | — | Legacy removed: `.travis.yml` and `travis_download_db.sh` (Travis CI shut down; `bioinfo.lifl.fr` unreachable); `index_default_ssu_rrna_db.py` and the SILVA 128 default `-d` (`bioinfo.univ-lille.fr` unreachable): `-d` is now required, as is `index_ref_db.py -i`. README and MarkerMAG-nf hints point to `matam_db_preprocessing.py` with SILVA 138.2. `test_functional.py` (always skipped) replaced by a mini-db taxonomy/Krona test. Suite 280 passed, 0 skipped |
+| 2026-11-11 | — | Historical upstream material removed from `eval_and_release/` (2019 developer README in .md/.html, release-comparison logs/PDFs/notebook for v0.9.7-v1.6.0, Docker test script, `dataset`/`db` symlinks, error-rate figure; 1,013 files, ~6 MB). The paired-end evaluation moved to `evaluation/paired_end_assembly/` (README link and its commands updated) |
