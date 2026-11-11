@@ -659,6 +659,8 @@ def print_intro(args):
     # Graph compaction & Components identification
     cmd_line += '--min_read_node {0} '.format(args.min_read_node)
     cmd_line += '--min_overlap_edge {0} '.format(args.min_overlap_edge)
+    if args.seed is not None:
+        cmd_line += '--seed {0} '.format(args.seed)
     if args.optimize_components:
         cmd_line += '--optimize_components '
 
@@ -1314,7 +1316,7 @@ def main():
         cmd_line = componentsearch_bin
         if args.optimize_components:
             cmd_line += ' -o'
-        if args.seed:
+        if args.seed is not None:   # 0 is a seed too
             cmd_line += ' -r ' + str(args.seed)
         cmd_line += ' -N ' + str(args.min_read_node)
         cmd_line += ' -E ' + str(args.min_overlap_edge)

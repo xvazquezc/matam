@@ -686,6 +686,26 @@ Before the change it failed: 1,457 vs 2,914 nodes.
     there (22 of ~1,470 s); with real read numbers it scales with the
     selected reads.
 
+### 20. [x] Unseeded graph compaction in MarkerMAG-nf; `--seed 0` ignored
+- MarkerMAG-nf didn't pass MATAM `--seed`, so ComponentSearch seeded from the
+  clock (`time(0)`). The same reads at 25% gave 38 or 41 scaffolds from run to
+  run.
+- In MATAM, `if args.seed:` treated `--seed 0` as no seed (ComponentSearch takes
+  `-r 0` fine; the coverage sampler already used `is not None`). The logged
+  command line also left out `--seed`, so a run log didn't record its seed.
+- **Fixed 2026-11-11:**
+  - MATAM: `is not None`, and `--seed` added to the logged command line.
+  - MarkerMAG-nf: new `params.matam_seed` (default 42), separate from
+    `matam_subsample_seed`. MATAM_ASSEMBLE passes it as `--matam_seed`, and the
+    wrapper as MATAM `--seed`. Help and README updated.
+- **Tests:**
+  - `test_functional_pe.py::test_seed_zero_seeds_the_graph_compaction_and_is_logged`
+    (fails without the fix).
+  - MarkerMAG-nf: default `--seed 42`; `--matam_seed` is passed and kept
+    separate from the subsampling `--seed`.
+  - By hand: 3 runs of the real wrapper at 25% gave byte-identical output (41
+    scaffolds), the same as the earlier seeded run.
+
 ### F1. [x] Follow-up: over half of the pairs are discarded before SGA
 - With correct mate identity, mates often fall into different graph
   components. The "same-component pair" rule then discards the pair:
@@ -820,3 +840,4 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | #18 | `--require_index` (prebuilt indexes only, checked before any step, no lock); `index_ref_db.py` in `bin/`; MarkerMAG-nf passes it and checks the db indexes before any task. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` on 5 db states |
 | 2026-11-11 | #18 | Inverted: prebuilt indexes are required by default (`sortmerna_index.ensure(require=True)`); `--no_require_index` builds them on first use; MarkerMAG-nf wrappers rely on the default. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` and real wrappers re-checked |
 | 2026-11-11 | #19 | `--stop_after STEP` (resumable; scaffolding skips abundance/taxonomy, empty assembly not fatal; complete index only needed from scaffolding). MarkerMAG-nf assembly wrapper uses `--stop_after scaffolding`; 7-depth outputs byte-identical to full runs. MATAM suite 199 passed, 6 skipped; MarkerMAG-nf 15 passed |
+| 2026-11-11 | #20 | MATAM `--seed 0` honoured and `--seed` logged; MarkerMAG-nf `--matam_seed` (default 42) passed to MATAM, runs now reproducible (3 identical runs). MATAM suite 209 passed, 6 skipped; MarkerMAG-nf 16 passed |

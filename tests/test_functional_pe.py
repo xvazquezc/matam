@@ -499,3 +499,14 @@ def test_stop_after_arguments_are_checked(tmp_path, options, message):
     code, log = _matam(tmp_path / 'r1.fq', tmp_path / 'r2.fq', tmp_path / 'db', tmp_path / 'out',
                        *options)
     assert code == 2 and message in log
+
+
+def test_seed_zero_seeds_the_graph_compaction_and_is_logged(pe_workspace, tmp_path):
+    # 'if args.seed:' used to treat --seed 0 as no seed (clock-seeded ComponentSearch).
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(base / 'reads_seed0', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+    code, log = _matam(forward, reverse, db, tmp_path / 'out', '--seed', '0', '--debug',
+                       '--stop_after', 'graph_compaction')
+    assert code == 0, log[-4000:]
+    assert re.search(r'CMD: \S*componentsearch .*-r 0 ', log)
+    assert re.search(r'matam_assembly\.py .*--seed 0 ', log)     # the logged command line
