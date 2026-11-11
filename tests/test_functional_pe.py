@@ -510,3 +510,21 @@ def test_seed_zero_seeds_the_graph_compaction_and_is_logged(pe_workspace, tmp_pa
     assert code == 0, log[-4000:]
     assert re.search(r'CMD: \S*componentsearch .*-r 0 ', log)
     assert re.search(r'matam_assembly\.py .*--seed 0 ', log)     # the logged command line
+
+
+def test_input_out_of_step_stops_the_run_before_mapping_without_verbose(pe_workspace, tmp_path):
+    # The input was only checked with -v, and R1/R2 order never: MATAM pairs
+    # mates by position, so out-of-step files were mis-paired silently.
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING)
+    lines = reverse.read_text().splitlines(True)
+    lines[400:404], lines[404:408] = lines[404:408], lines[400:404]   # swap R2 reads 101/102
+    reverse.write_text(''.join(lines))
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / 'matam_assembly.py'), '--forward', str(forward),
+         '--reverse', str(reverse), '-d', str(db), '-o', str(tmp_path / 'out'),
+         '--max_memory', '2000'], env=tool_env(), capture_output=True, text=True)
+    log = completed.stdout + completed.stderr
+    assert completed.returncode != 0
+    assert 'Invalid FASTQ input' in log and 'not in step: read 101' in log
+    assert not (tmp_path / 'out' / 'sortmerna_reads_mapping').exists()

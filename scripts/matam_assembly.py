@@ -26,7 +26,7 @@ import matam_version
 import sortmerna_step
 from sortmerna_step import find_sortmerna_output
 from assembler_factory import AssemblerFactory
-from fastq_utils import read_fastq_file_handle, is_phred33
+from fastq_utils import read_fastq_file_handle, validate_paired_fastq, FastqFormatError
 
 
 # Set LC_LANG to C for standard sort behaviour
@@ -1086,29 +1086,23 @@ def main():
     # Get input reads number
     input_reads_nb = -1
 
-    if run_step and args.verbose:
-        if input_fastq_extension in ('.fq', '.fastq'):
-            input_fastq_line_nb = fastq_line_count(input_fastq_filepath)
-            reverse_fastq_line_nb = fastq_line_count(args.reverse)
-            if input_fastq_line_nb % 4 != 0 or reverse_fastq_line_nb % 4 != 0:
-                logger.fatal('A FastQ input file does not have a number of lines multiple of 4')
-                sys.exit('Wrong number of lines')
-            elif input_fastq_line_nb != reverse_fastq_line_nb:
-                logger.fatal('Forward and reverse FastQ files have different numbers of reads')
-                sys.exit('Paired FastQ files differ in size')
-            elif (not is_phred33(input_fastq_filepath, number_of_reads_to_test=400) or
-                  not is_phred33(args.reverse, number_of_reads_to_test=400)):
-                logger.fatal('Due to SGA, MATAM support only FastQ file with an offset of +33')
-                sys.exit('Not a Phred+33 FastQ file')
-            # Reads are counted as mates (R1 + R2), the unit used by every step.
-            input_reads_nb = (input_fastq_line_nb + reverse_fastq_line_nb) // 4
-        else:
-            logger.fatal('Input fastq file extension was not recognised ({0})'.format(input_fastq_extension))
-            sys.exit('Wrong extension')
+    # Check the whole input before mapping it (every run, not only with -v):
+    # FASTQ structure, R1/R2 holding the same pairs in the same order (MATAM
+    # pairs mates by position), and Phred+33 qualities (needed by SGA).
+    if run_step:
+        t0_wall = time.time()
+        try:
+            input_pairs_nb = validate_paired_fastq(args.forward, args.reverse)
+        except FastqFormatError as error:
+            logger.fatal('Invalid FASTQ input: {0}'.format(error))
+            sys.exit('Invalid FASTQ input')
+        # Reads are counted as mates (R1 + R2), the unit used by every step.
+        input_reads_nb = 2 * input_pairs_nb
 
         logger.info('=== Input ===')
-        logger.info('Input file: {}'.format(input_fastq_filepath))
-        logger.info('Input file reads nb: {} reads (R1 + R2 mates)'.format(input_reads_nb))
+        logger.info('Input files: {} and {}'.format(args.forward, args.reverse))
+        logger.info('Input reads nb: {} reads (R1 + R2 mates, {} pairs), checked in {:.1f} s'.format(
+            input_reads_nb, input_pairs_nb, time.time() - t0_wall))
 
     ###############################
     # Reads mapping against ref db

@@ -802,11 +802,40 @@ Before the change it failed: 1,457 vs 2,914 nodes.
   helpers (`fasta_utils.py`) and test them once. The copies behave
   differently on edge cases (some yield `('', '')` on empty input;
   `matam_assembly.read_tab_file_handle_sorted` yields `[[]]`).
-- [ ] **Extract FASTQ input validation into a function**: the line count
+- [x] **Extract FASTQ input validation into a function**: the line count
   being a multiple of 4, matching read counts in the pair, and the Phred+33
   check run only with `--verbose` in `matam_assembly.main`. Moving them into
   `validate_paired_fastq(fwd, rev)` would make them testable, and they should
   probably run every time.
+  - **Done 2026-11-11:** `fastq_utils.validate_paired_fastq` runs on every
+    run that maps reads, before the mapping. It reads both files once, in
+    step, and checks every record:
+    - FASTQ structure (`@`, `+`, as many quality values as bases), a
+      truncated last record, and blank lines (allowed only at the end);
+    - the same number of reads in both files;
+    - R1/R2 in step (`is_same_pair`: identical IDs, or a trailing 1/2 after
+      the same separator; MATAM pairs mates by position, so swapped or
+      reordered files were mis-paired silently);
+    - Phred+33 on the first 1,000 pairs (the encoding is per file; was the
+      first 400 reads; checking every read was judged excessive);
+    - FASTQ file names, and unreadable `.gz` files.
+
+    Errors name the file and the record. Before, structure and pair order
+    were never checked, and a truncated last record passed.
+  - **Speed** (2 M pairs; the old `-v` checks took 0.8 s plain / 4.6 s gz):
+    1.9 s plain / 4.4 s gz.
+    - A per-record Python loop took 11 s / 15 s. 4.3 s of each file was
+      per-character `min`/`max` on qualities; replaced by `bytes.translate`.
+    - Batches of 10,000 records are checked with C-level `map`/compare.
+    - Each file is read in its own thread: zlib releases the GIL, so both
+      decompress in parallel.
+    - Alternatives timed: seqkit stats -j4 took 2.6 s on gz, but it accepts
+      a truncated last record and checks neither pairing nor encoding.
+      Biopython parsing alone took 6.1 s on gz. GNU gzip as a subprocess was
+      slower than zlib (3.2 vs 2.0 s per file), and libdeflate-gunzip loads
+      the whole file into memory.
+  - **Tests:** `test_input_parsers.py` (70, run with 10,000- and 3-record
+    batches; qualities after the sample are not read); `test_functional_pe.py::test_input_out_of_step_stops_the_run_before_mapping_without_verbose`.
 
 ---
 
@@ -841,3 +870,5 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | #18 | Inverted: prebuilt indexes are required by default (`sortmerna_index.ensure(require=True)`); `--no_require_index` builds them on first use; MarkerMAG-nf wrappers rely on the default. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` and real wrappers re-checked |
 | 2026-11-11 | #19 | `--stop_after STEP` (resumable; scaffolding skips abundance/taxonomy, empty assembly not fatal; complete index only needed from scaffolding). MarkerMAG-nf assembly wrapper uses `--stop_after scaffolding`; 7-depth outputs byte-identical to full runs. MATAM suite 199 passed, 6 skipped; MarkerMAG-nf 15 passed |
 | 2026-11-11 | #20 | MATAM `--seed 0` honoured and `--seed` logged; MarkerMAG-nf `--matam_seed` (default 42) passed to MATAM, runs now reproducible (3 identical runs). MATAM suite 209 passed, 6 skipped; MarkerMAG-nf 16 passed |
+| 2026-11-11 | Tier 3 | FASTQ input validated every run in one pass: structure, truncation, read counts, R1/R2 order, Phred+33 over all reads; batch + bytes.translate + per-file threads (4.8 s gz for 2 M pairs, old -v checks 4.6 s). Suite 277 passed, 6 skipped |
+| 2026-11-11 | Tier 3 | Quality encoding checked on the first 1,000 pairs only (structure and pairing still on every read): 1.9 s plain / 4.4 s gz for 2 M pairs. Suite 279 passed, 6 skipped |
