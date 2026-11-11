@@ -79,6 +79,12 @@ matam_assembly.py --help
 `build.py` also initializes missing Git submodules, so an existing non-recursive
 clone can be built with the same command.
 
+`matam_assembly.py --version` (also `matam_db_preprocessing.py` and
+`index_ref_db.py`) prints the version, which is also written at the start of
+every run log. On the commit tagged `v<VERSION>` it is the number in the
+`VERSION` file. On any other commit the short commit hash is added
+(`<VERSION>+<hash>`). While `VERSION` is empty, the version is just the hash.
+
 ## <a id="matam-with-conda"></a>2.2 Published Conda package
 
 [![Anaconda-Server Badge](https://anaconda.org/bioconda/matam/badges/version.svg)](https://anaconda.org/bioconda/matam)
@@ -227,6 +233,13 @@ After each SortMeRNA mapping, MATAM records the command, inputs and outputs in a
 reused; an incomplete one (e.g. an interrupted run) or one made from other inputs is
 removed, together with SortMeRNA's run state, and redone. Resuming after the read mapping
 requires its output to be complete; otherwise MATAM asks to resume from `reads_mapping`.
+
+`--stop_after STEP` ends the run after that step (same step names as `--resume_from`). The
+files the next steps read are kept, so the run can be continued later with
+`--resume_from` the next step. `--stop_after scaffolding` gives the final assembly
+(`final_assembly.fa`, the scaffolds without abundances) and skips the abundance calculation,
+which maps every selected read to the scaffolds. With it, a run that assembles no scaffolds
+ends normally with an empty assembly.
 
 MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
 temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`

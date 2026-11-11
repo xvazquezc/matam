@@ -211,12 +211,13 @@ def test_filter_only_publishes_selected_pairs_as_r1_r2_files(pe_workspace):
     assert not (out_dir / 'final_assembly.fa').exists()
 
 
-def _matam(forward, reverse, db, out_dir, *extra_args):
+def _matam(forward, reverse, db, out_dir, *extra_args, keep_tmp=True):
     completed = subprocess.run(
         [sys.executable, str(SCRIPTS_DIR / 'matam_assembly.py'),
          '--forward', str(forward), '--reverse', str(reverse),
          '-d', str(db), '-o', str(out_dir), '--cpu', str(min(8, multiprocessing.cpu_count())),
-         '--max_memory', '2000', '-v', '--seed', '42', '--keep_tmp', *extra_args],
+         '--max_memory', '2000', '-v', '--seed', '42', *(['--keep_tmp'] if keep_tmp else []),
+         *extra_args],
         env=tool_env(), capture_output=True, text=True)
     return completed.returncode, completed.stdout + completed.stderr
 
@@ -364,6 +365,7 @@ def test_by_default_only_the_prebuilt_indexes_are_used(pe_workspace):
     forward, reverse = write_pe_reads(base / 'reads_require', 'casava', every=PAIR_SUBSAMPLING, gz=True)
     code, log = _matam(forward, reverse, db, base / 'out_require')
     assert code == 0, log[-4000:]
+    assert re.search(r'MATAM version: \S+', log)          # provenance in every run log
     assert 'SortMeRNA index of the clustered ref db: ' + PREBUILT in log
     assert 'SortMeRNA index of the complete ref db: ' + PREBUILT in log
     assert BUILT_IN_DB not in log and BUILT_IN_RUN not in log
@@ -410,3 +412,90 @@ def test_index_ref_db_makes_an_unindexed_db_usable(tmp_path):
     code, log = _matam(forward, reverse, db, tmp_path / 'out', '--filter_only')
     assert code == 0, log[-4000:]
     assert PREBUILT in log
+
+
+# --stop_after (MarkerMAG-nf stops after scaffolding: it doesn't use abundances).
+
+def _scaffolds(path):
+    return sorted(seq for _, seq in read_fasta(path))
+
+
+def _abundance(path):
+    return sorted((seq, float(re.search(r'count=([0-9.]+)', header).group(1)))
+                  for header, seq in read_fasta(path))
+
+
+def test_stop_after_scaffolding_gives_the_scaffolds_and_resumes_to_the_abundances(pe_workspace, pe_runs):
+    base, db = pe_workspace
+    # The reads of pe_runs['casava'].
+    forward, reverse = write_pe_reads(base / 'reads_stop', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+    out_dir = base / 'out_stop_scaffolding'
+
+    code, log = _matam(forward, reverse, db, out_dir, '--stop_after', 'scaffolding', keep_tmp=False)
+
+    assert code == 0, log[-4000:]
+    assert '=== Abundance calculation' not in log
+    assert 'Stopping after scaffolding (--stop_after)' in log
+    final_assembly = out_dir / 'final_assembly.fa'
+    assert os.readlink(str(final_assembly)) == 'workdir/scaffolds.NR.min_500bp.fa'
+    assert _scaffolds(final_assembly) == pe_runs['casava']['scaffold_sequences']
+    assert not any('count=' in header for header, _ in read_fasta(final_assembly))
+    workdir = out_dir / 'workdir'
+    assert not list(workdir.glob('*.abd.fa'))
+    assert not list(workdir.glob('*.mpileup'))           # tmp files removed as usual
+
+    # The run continues where it stopped.
+    code, log = _matam(forward, reverse, db, out_dir, '--resume_from', 'abundance_calculation',
+                       keep_tmp=False)
+    assert code == 0, log[-4000:]
+    assert os.readlink(str(final_assembly)).endswith('.abd.fa')
+    assert _abundance(final_assembly) == pe_runs['casava']['abundance']
+
+
+def test_stop_after_an_early_step_keeps_what_the_next_steps_read(pe_workspace, pe_runs_coverage):
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(base / 'reads_stop_early', 'casava', every=PAIR_SUBSAMPLING,
+                                      gz=True)
+    out_dir = base / 'out_stop_early'
+    # With --coverage_threshold the filtered SAM is a tmp file, also read by
+    # the LCA labelling (graph_compaction).
+    coverage = ('--coverage_threshold', '20')
+
+    code, log = _matam(forward, reverse, db, out_dir, *coverage, '--stop_after',
+                       'alignments_filtering', keep_tmp=False)
+
+    assert code == 0, log[-4000:]
+    assert 'continue with --resume_from overlap_graph_building' in log
+    assert '=== Overlap-graph building' not in log
+    workdir = out_dir / 'workdir'
+    assert list(workdir.glob('*.scr_filt_geo_90pct.sam'))
+    assert not list(workdir.glob('*.nodes.csv')) and not (out_dir / 'final_assembly.fa').exists()
+
+    code, log = _matam(forward, reverse, db, out_dir, *coverage, '--resume_from',
+                       'overlap_graph_building', keep_tmp=False)
+    assert code == 0, log[-4000:]
+    assert _scaffolds(out_dir / 'final_assembly.fa') == pe_runs_coverage['casava']['scaffold_sequences']
+    assert not list(workdir.glob('*.scr_filt_geo_90pct.sam'))   # removed at the end
+
+
+def test_stop_before_scaffolding_does_not_need_the_complete_index(tmp_path):
+    db = build_mini_db(tmp_path / 'db')
+    shutil.rmtree(str(db) + '.complete.smr')
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+
+    code, log = _matam(forward, reverse, db, tmp_path / 'out', '--stop_after', 'contigs_assembly')
+
+    assert code == 0, log[-4000:]
+    assert 'continue with --resume_from scaffolding' in log
+    assert '=== Scaffolding' not in log
+
+
+@pytest.mark.parametrize('options, message', [
+    (['--resume_from', 'scaffolding', '--stop_after', 'contigs_assembly'],
+     '--stop_after contigs_assembly comes before --resume_from scaffolding'),
+    (['--filter_only', '--stop_after', 'scaffolding'], 'do not combine it with --stop_after'),
+])
+def test_stop_after_arguments_are_checked(tmp_path, options, message):
+    code, log = _matam(tmp_path / 'r1.fq', tmp_path / 'r2.fq', tmp_path / 'db', tmp_path / 'out',
+                       *options)
+    assert code == 2 and message in log

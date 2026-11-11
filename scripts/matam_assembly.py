@@ -22,6 +22,7 @@ from binary_utils import Binary
 import components_assembly
 import pe_tables
 import sortmerna_index
+import matam_version
 import sortmerna_step
 from sortmerna_step import find_sortmerna_output
 from assembler_factory import AssemblerFactory
@@ -91,6 +92,11 @@ matam_db_dir = os.path.join(matam_root_dir, 'db')
 
 # Set default ref db
 default_ref_db = os.path.join(matam_db_dir, 'SILVA_128_SSURef_NR95')
+
+# Pipeline steps, in order (--resume_from and --stop_after)
+STEPS = ('reads_mapping', 'alignments_filtering', 'overlap_graph_building',
+         'graph_compaction', 'contigs_assembly', 'scaffolding',
+         'abundance_calculation', 'taxonomic_assignment')
 
 def force_symlink(target, link_name):
     if os.path.lexists(link_name):
@@ -229,6 +235,10 @@ def parse_arguments():
     parser = DefaultHelpParser(description='MATAM assembly',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
+
+    # --version
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s {}'.format(matam_version.version()))
 
     # Main parameters
     group_main = parser.add_argument_group('Main parameters')
@@ -509,11 +519,19 @@ def parse_arguments():
                            action = 'store',
                            metavar = 'STEP',
                            type = str,
-                           choices = ['reads_mapping', 'alignments_filtering', 'overlap_graph_building',
-                                      'graph_compaction', 'contigs_assembly', 'scaffolding',
-                                      'abundance_calculation', 'taxonomic_assignment'],
+                           choices = STEPS,
                            help = 'Try to resume from given step. '
                                   'Steps are: %(choices)s')
+    # --stop_after
+    group_adv.add_argument('--stop_after',
+                           action = 'store',
+                           metavar = 'STEP',
+                           type = str,
+                           choices = STEPS,
+                           help = 'Stop after the given step (same steps as --resume_from). '
+                                  'The run can be continued later with --resume_from the next '
+                                  'step. E.g. "scaffolding" gives the final assembly without '
+                                  'abundances (no read remapping to the scaffolds)')
 
     # --filter_only
     group_adv.add_argument('--filter_only',
@@ -540,6 +558,14 @@ def parse_arguments():
     if args.rdp_cutoff < 0 or args.rdp_cutoff > 1:
         parser.print_help()
         raise Exception("cutoff not in range [0,1]")
+
+    if args.stop_after:
+        if args.filter_only:
+            parser.error('--filter_only already stops after reads_mapping; '
+                         'do not combine it with --stop_after')
+        if args.resume_from and STEPS.index(args.stop_after) < STEPS.index(args.resume_from):
+            parser.error('--stop_after {} comes before --resume_from {}'.format(
+                args.stop_after, args.resume_from))
 
     # contig_coverage_threshold default value makes no sense when args.read_correction is not auto
     if args.read_correction != 'auto':
@@ -582,6 +608,7 @@ def print_intro(args):
     """
 
     logger.info('=== MATAM assembly ===')
+    logger.info('MATAM version: {0}'.format(matam_version.version()))
 
     # Retrieve complete cmd line
     cmd_line = '{binpath} '.format(binpath=matam_assembly_bin)
@@ -599,6 +626,9 @@ def print_intro(args):
 
     if args.resume_from:
         cmd_line += '--resume_from {} '.format(args.resume_from)
+
+    if args.stop_after:
+        cmd_line += '--stop_after {} '.format(args.stop_after)
 
     if args.true_references:
         cmd_line += '--true_references {0} '.format(args.true_references)
@@ -833,7 +863,8 @@ def main():
     if not args.no_require_index:
         required_indexes = [('clustered ref db', clustered_ref_db_filepath,
                              clustered_ref_db_smr_idx_dir)]
-        if not args.filter_only:
+        if not args.filter_only and not (
+                args.stop_after and STEPS.index(args.stop_after) < STEPS.index('scaffolding')):
             required_indexes.append(('complete ref db', complete_ref_db_filepath,
                                      complete_ref_db_smr_idx_dir))
         for label, ref_fasta, db_idx_dir in required_indexes:
@@ -841,6 +872,30 @@ def main():
                 sortmerna_index.prebuilt(sortmerna_bin, ref_fasta, db_idx_dir, label)
             except sortmerna_index.IndexMissingError as error:
                 exit_without_index(error)
+
+    def stop_run(step, error_code):
+        """--stop_after: end the run after step (one before scaffolding), as a full run ends.
+
+        Temporary files are removed (unless --keep_tmp), except those that a
+        later step still reads, so the run can be continued with --resume_from.
+        """
+        # Temporary files read after the step that tags them: the filtered
+        # alignments (tagged with --coverage_threshold) are also read by the
+        # LCA labelling, part of graph_compaction.
+        needed_until = {sam_filt_filepath: 'graph_compaction'}
+        keep = {path for path, last_step in needed_until.items()
+                if STEPS.index(last_step) > STEPS.index(step)}
+        logger.info('Stopping after {0} (--stop_after); continue with --resume_from {1}'.format(
+            step, STEPS[STEPS.index(step) + 1]))
+        if error_code:
+            logger.error('{0} terminated with some errors. '.format(program_filename))
+            return 1
+        if not args.keep_tmp:
+            logger.info('Removing tmp files')
+            rm_files([path for path in to_rm_filepath_list if path not in keep])
+        logger.info('{0} terminated with no error'.format(program_filename))
+        logger.info('Run completed in {0:.4f} seconds wall time'.format(time.time() - global_t0_wall))
+        return 0
 
     # Read mapping
     sortme_output_basename = input_fastq_basename
@@ -1135,6 +1190,8 @@ def main():
 
     if args.filter_only:
         return error_code
+    if args.stop_after == 'reads_mapping':
+        return stop_run('reads_mapping', error_code)
     #############################
     # Alignment filtering
 
@@ -1192,6 +1249,9 @@ def main():
     if args.coverage_threshold:
         to_rm_filepath_list.append(sam_filt_filepath)
 
+    if args.stop_after == 'alignments_filtering':
+        return stop_run('alignments_filtering', error_code)
+
     #########################
     # Overlap-graph building
 
@@ -1237,6 +1297,9 @@ def main():
         ovgraph_edges_nb = int(subprocess.check_output('wc -l {0}'.format(ovgraphbuild_edges_csv_filepath), shell=True, bufsize=0).split()[0]) - 1
 
         logger.info('Overlap graph stats: {} nodes, {} edges'.format(ovgraph_nodes_nb, ovgraph_edges_nb))
+
+    if args.stop_after == 'overlap_graph_building':
+        return stop_run('overlap_graph_building', error_code)
 
     ###############################################
     # Graph compaction & Components identification
@@ -1346,6 +1409,9 @@ def main():
     #     if args.verbose:
     #         sys.stderr.write('\n')
 
+    if args.stop_after == 'graph_compaction':
+        return stop_run('graph_compaction', error_code)
+
     ###################
     # Contigs assembly
 
@@ -1440,6 +1506,9 @@ def main():
     # Compute contigs assembly stats
     contigs_stats = compute_fasta_stats(contigs_filepath)
     large_NR_contigs_stats = compute_fasta_stats(large_NR_contigs_filepath)
+
+    if args.stop_after == 'contigs_assembly':
+        return stop_run('contigs_assembly', error_code)
 
     ##############
     # Scaffolding
@@ -1566,7 +1635,9 @@ def main():
         except OSError:
             is_empty = True
 
-        if is_empty:
+        if is_empty and args.stop_after == 'scaffolding':
+            logger.warning('No scaffolds were assembled: %s is empty', large_NR_scaffolds_filepath)
+        elif is_empty:
             logger.fatal("Can't proceed all steps (abundance calculation ...) when no scaffolds are available: %s" % large_NR_scaffolds_filepath)
             sys.exit("Can't proceed further")
 
@@ -1628,6 +1699,13 @@ def main():
     ########################
     # Abundance calculation
 
+    # --stop_after scaffolding: no abundance calculation nor taxonomic
+    # assignment; the final assembly is the scaffolds without abundances.
+    if args.stop_after == 'scaffolding':
+        logger.info('Stopping after scaffolding (--stop_after); continue with '
+                    '--resume_from abundance_calculation')
+        run_step = False
+
     scaffolds_fasta = large_NR_scaffolds_filepath
     reads = (sortme_output_forward_filepath, sortme_output_reverse_filepath)
     fasta_with_abundance_filepath =  '%s.abd%s' % os.path.splitext(scaffolds_fasta)
@@ -1659,6 +1737,9 @@ def main():
         logger.debug('Write abundance informations to: %s' % fasta_with_abundance_filepath)
         # Output running time
         logger.info('Abundance calculation completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
+
+    if args.stop_after == 'abundance_calculation':
+        run_step = False
 
     #################################
     # taxonomic assignment with rdp
@@ -1711,8 +1792,11 @@ def main():
             os.path.relpath(krona_html_filepath, start=args.out_dir),
             final_krona_html_symlink_filepath,
         )
+    final_assembly_filepath = fasta_with_abundance_filepath
+    if args.stop_after == 'scaffolding':
+        final_assembly_filepath = large_NR_scaffolds_filepath
     force_symlink(
-        os.path.relpath(fasta_with_abundance_filepath, start=args.out_dir),
+        os.path.relpath(final_assembly_filepath, start=args.out_dir),
         final_assembly_symlink_filepath,
     )
     ###########################

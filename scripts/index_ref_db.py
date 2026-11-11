@@ -9,6 +9,7 @@ import time
 import logging
 from binary_utils import Binary
 import sortmerna_index
+import matam_version
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -43,6 +44,10 @@ def parse_arguments():
     parser = DefaultHelpParser(description='Index ref db',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
+
+    # --version
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s {}'.format(matam_version.version()))
 
     # Main parameters
     group_main = parser.add_argument_group('Main parameters')

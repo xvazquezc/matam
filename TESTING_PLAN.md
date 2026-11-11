@@ -651,6 +651,41 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 - **Not addressed:** with `--no_require_index`, a failing `flock` on the
   run's own work directory (the private-index fallback) is not caught.
 
+### 19. [x] No way to stop a run early: MarkerMAG-nf pays for steps it doesn't use
+- MATAM always ran abundance calculation (SortMeRNA index of the scaffolds,
+  then every selected read mapped to them). MarkerMAG-nf only reads the
+  scaffolds. There was also no stop point for running the graph stage
+  outside MATAM (`nextflow/docs/matam-performance-plan.md`).
+- **Implemented 2026-11-11:**
+  - `--stop_after STEP` in `matam_assembly.py`, with the same steps as
+    `--resume_from` (shared `STEPS`). It is rejected before `--resume_from`
+    and with `--filter_only`.
+  - Steps before scaffolding end the run there: tmp files are removed as at
+    the end of a full run, except the filtered SAM (`--coverage_threshold`),
+    which LCA labelling (graph_compaction) still reads. The log names the
+    `--resume_from` step to continue with.
+  - `scaffolding` skips abundance and taxonomy. `final_assembly.fa` then
+    links to `scaffolds.NR.min_<len>bp.fa`, and an empty assembly is a
+    warning, not "Can't proceed further".
+  - The complete-db index is only required when the run reaches scaffolding.
+  - MarkerMAG-nf: `markermag_matam_assemble_pct.py` passes
+    `--stop_after scaffolding`. A depth without scaffolds now gives an empty
+    FASTA with a warning; before, MATAM's exit 1 failed the task.
+- **Tests:**
+  - `test_functional_pe.py`: `--stop_after scaffolding` gives the full run's
+    scaffolds without abundances, and `--resume_from abundance_calculation`
+    then gives the full run's abundances; stopping after
+    alignments_filtering keeps the filtered SAM, and resuming gives the
+    full run's scaffolds; a stop before scaffolding doesn't need the complete
+    index; argument checks.
+  - MarkerMAG-nf: the wrapper passes `--stop_after scaffolding`; no scaffold
+    gives an empty depth.
+  - All 7 depths of the simulated community through the real wrapper: per-depth
+    outputs byte-identical to the earlier full runs (same seed), with no
+    abundance step. Abundance had been 0.8-10.5% of each run's wall time
+    there (22 of ~1,470 s); with real read numbers it scales with the
+    selected reads.
+
 ### F1. [x] Follow-up: over half of the pairs are discarded before SGA
 - With correct mate identity, mates often fall into different graph
   components. The "same-component pair" rule then discards the pair:
@@ -784,3 +819,4 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | #14 | Fixed: `compute_contigs_compatibility.py` writes `LN:2147483647` instead of `LN:9999999999`. Untested by design: no test added or planned |
 | 2026-11-11 | #18 | `--require_index` (prebuilt indexes only, checked before any step, no lock); `index_ref_db.py` in `bin/`; MarkerMAG-nf passes it and checks the db indexes before any task. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` on 5 db states |
 | 2026-11-11 | #18 | Inverted: prebuilt indexes are required by default (`sortmerna_index.ensure(require=True)`); `--no_require_index` builds them on first use; MarkerMAG-nf wrappers rely on the default. MATAM suite 194 passed, 6 skipped; MarkerMAG-nf 14 passed; Nextflow `-preview` and real wrappers re-checked |
+| 2026-11-11 | #19 | `--stop_after STEP` (resumable; scaffolding skips abundance/taxonomy, empty assembly not fatal; complete index only needed from scaffolding). MarkerMAG-nf assembly wrapper uses `--stop_after scaffolding`; 7-depth outputs byte-identical to full runs. MATAM suite 199 passed, 6 skipped; MarkerMAG-nf 15 passed |
