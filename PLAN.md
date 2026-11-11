@@ -7,9 +7,9 @@
 
 - Upstream base: `v1.6.2` (`e7cd9b2`)
 - Fork remote: `git@github.com:xvazquezc/matam.git`
-- `origin/master`: `c5f5a06`
-- Local `master`: `d371b1d` (one commit ahead of `origin/master`)
-- Uncommitted documentation: `README.md` and this `PLAN.md`
+- All the work below is on `origin/master` (2026-11-11). Later changes
+  (paired-end rework, index records, `--stop_after`, `--version`, input
+  validation) are tracked in `TESTING_PLAN.md`.
 
 ## Completed work (8 commits on top of v1.6.2)
 
@@ -101,15 +101,69 @@ workers, so the 24-worker cap is retained.
 
 ---
 
+## Production-size benchmark (synthetic, 2026-11-11)
+
+The slow production SAM wasn't available, so two production-size filtered SAMs
+were made with real MATAM steps (`--stop_after alignments_filtering`):
+simulated ART 2x150 reads, mapped against a 51,483-reference SILVA 144 subset
+(10 families, 95% clustering).
+
+- *mixed*: a 34-taxon community (controls, strain pairs, novel pairs);
+- *skewed*: the same plus 5 Enterobacteriaceae (E. coli/Shigella,
+  Salmonella, Klebsiella, Enterobacter, Citrobacter) at 2500x. That is a
+  dense, conserved part of SILVA, so most of those reads share references.
+
+AMD Ryzen AI 9 HX 370 (12 cores, 24 threads). Serial = 1 thread on shards
+0 and 40 of 64, averaged and scaled by 64.
+
+| | mixed | skewed |
+|---|---:|---:|
+| Mapped reads (mates) | 169,624 | 180,320 |
+| SAM records | 929,301 | 1,014,978 |
+| Candidate read pairs | 14.39 G | 16.26 G |
+| Compatible (edges) | 77.6 M (0.54%) | 149.1 M (0.92%) |
+| Neither compatible nor incompatible | 13.61 G (94.6%) | 14.72 G (90.5%) |
+| Wall, 24 threads, all pairs | 613 s | 1,034 s |
+| Serial estimate | ~5,450 s (1.5 h) | ~9,700 s (2.7 h) |
+| Speedup at 24 threads | ~8.9x | ~9.4x |
+| Serial throughput | ~2.6 M pairs/s | ~1.7 M pairs/s |
+| Peak memory | 0.99 GB | 1.08 GB |
+
+Shard costs vary with the taxa they hold, because ART read names are grouped
+by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
+
+**What this settles, and what it doesn't**
+
+- At the production read count (170k), a 24-thread job builds the graph in
+  10-17 min on these data. Time grows with the square of the read count.
+- The production run (~100 h serial for 170k reads, i.e. ~40 k pairs/s) is
+  40-65x slower per pair. These data don't reproduce that. Likely causes, not
+  verified: up to 10 alignments per read against full SILVA (5.5 here), and
+  far more pairs sharing references and overlapping. Only the production SAM
+  can confirm.
+- With the ~9x thread speed-up, a 100 h serial graph is ~11 h in one 24-thread
+  job, within a 48 h walltime. Splitting the graph into separate jobs is
+  therefore not needed for that case. It would be needed only for graphs that
+  stay above the walltime at 24 threads (e.g. 2x the reads: ~44 h).
+- 90-95% of the candidate pairs end as "neither compatible nor incompatible":
+  no alignment of one read overlaps one of the other on a common reference.
+  They never give an edge. The all-pairs loop still tests every pair (up to
+  10x10 alignment comparisons each).
+
 ## Remaining work
 
-1. Commit the README index-compatibility and work-directory documentation.
-2. Push `d371b1d` and the documentation commit to `origin/master`.
-3. Benchmark the slow production filtered SAM with its matching clustered
-   reference; the current 67.9-million-pair dataset validates correctness and
-   scaling but is not the pathological workload.
-4. Add MarkerMAG-nf scatter/merge orchestration only if external graph shards
-   are still needed after production benchmarking.
+1. Candidate-pair pruning in `ovgraphbuild` (likely the biggest gain). Per
+   read, compare only reads that share a reference (better: overlap on one),
+   in ascending order. Edges then stay byte-identical, and the skipped pairs
+   are added to the "incompatible" and "neither" counts so the statistics
+   don't change either. This works with the existing threads and pair shards.
+   Measure it on the synthetic sets above, then on the production SAM.
+2. Benchmark the slow production filtered SAM with its clustered reference
+   (`ovgraphbuild` with `--threads 24`, plus 1 thread on a few
+   `--pair-shard-*` slices for the serial rate). Record the read count,
+   alignments per read, compatible and "neither" fractions, and pairs/s.
+3. Add MarkerMAG-nf scatter/merge orchestration only if a graph is still over
+   the walltime at 24 threads after 1 and 2.
 
 ---
 
