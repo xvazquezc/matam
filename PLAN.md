@@ -24,8 +24,7 @@
 | c5f5a06 | improve db prep |
 | d371b1d | perf(ovgraphbuild): dynamically schedule pair-processing chunks |
 
-Commits through `c5f5a06` are on the fork. `d371b1d` is committed locally but
-has not yet been pushed.
+All of these commits are on the fork.
 
 ---
 
@@ -53,8 +52,7 @@ has not yet been pushed.
 
 ### Phase D — index compatibility documentation
 
-The README warning for the SortMeRNA 6 BBHash index-format break is present in
-the working tree but is not committed yet. Users upgrading from SortMeRNA 4/5
+The README warns about the SortMeRNA 6 BBHash index-format break. Users upgrading from SortMeRNA 4/5
 must rebuild both `.smr` indexes.
 
 ---
@@ -146,18 +144,52 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
   therefore not needed for that case. It would be needed only for graphs that
   stay above the walltime at 24 threads (e.g. 2x the reads: ~44 h).
 - 90-95% of the candidate pairs end as "neither compatible nor incompatible":
-  no alignment of one read overlaps one of the other on a common reference.
-  They never give an edge. The all-pairs loop still tests every pair (up to
+  the two reads have no reference in common (pairs that share a reference
+  but don't overlap on it are counted as incompatible). They never give an
+  edge. The all-pairs loop still tests every pair (up to
   10x10 alignment comparisons each).
 
 ## Remaining work
 
-1. Candidate-pair pruning in `ovgraphbuild` (likely the biggest gain). Per
-   read, compare only reads that share a reference (better: overlap on one),
-   in ascending order. Edges then stay byte-identical, and the skipped pairs
-   are added to the "incompatible" and "neither" counts so the statistics
-   don't change either. This works with the existing threads and pair shards.
-   Measure it on the synthetic sets above, then on the production SAM.
+1. **Done (2026-11-12, not committed yet): candidate-pair pruning in
+   `ovgraphbuild`.**
+   - **What it does:** by default each read is compared only with later reads
+     that share a reference, found through a reference → reads index built
+     once. They are compared in ascending order.
+   - **Statistics:** the skipped pairs are added in bulk to the "neither" and
+     "incompatible" counts. Edges, nodes and statistics are byte-identical to
+     the all-pairs loop, which `--all-pairs` keeps.
+   - **Threads and shards:** both work as before. The new
+     `compared_pair_count` is written to stdout and to the shard metadata.
+   - **Tests:** `tests/test_ovgraphbuild_pair_pruning.py` (12). The ASan and
+     UBSan build is clean.
+   - **Benchmark** (SILVA 144 subset sets above; 24 threads, plus 1 thread on
+     shards 0 and 40 of 64; outputs identical to the baseline):
+
+     | Set | Pairs compared | 24 threads, wall | CPU | 1 thread, shards 0 / 40 |
+     |---|---:|---:|---:|---:|
+     | mixed, 161,680 mates | 455 M of 13.07 G (3.5%) | 544 → 388 s (1.40×) | 9,811 → 6,188 s (1.59×) | 46.6 → 26.3 s / 47.5 → 22.6 s |
+     | skewed, 161,846 mates | 729 M of 13.10 G (5.6%) | 697 → 543 s (1.28×) | 14,273 → 10,590 s (1.35×) | 40.4 → 18.8 s / 85.7 → 61.6 s |
+
+     The index adds about 35 MB to peak memory.
+   - **Why the gain is modest:** about 95% of the pairs are skipped, but they
+     were only 25-40% of the CPU time. The rest is spent on the pairs that
+     share a reference:
+     - the 52 M (mixed) or 83 M (skewed) compatible pairs, each re-aligned
+       de novo with dynamic programming (`align2ReadSequences`);
+     - the overlap walk.
+
+     gprof (`-O2 -pg -fno-inline`, skewed shard 40) puts about a third of the
+     samples in the seqan DP code and about a third in seqan string iterators.
+     Its attribution of anonymous-namespace symbols is unreliable, and
+     `-fno-inline` inflates the iterator cost.
+   - **Possible follow-ups:**
+     - balance thread chunks and shards by candidate count rather than by
+       theoretical pair count (busy threads ≈ 16 of 24 on skewed);
+     - make the de novo check cheaper: a banded alignment around the known
+       offset, or skip it when the reference overlap is already exact.
+       Either change could alter the output, so it needs its own equivalence
+       tests.
 2. Benchmark the slow production filtered SAM with its clustered reference
    (`ovgraphbuild` with `--threads 24`, plus 1 thread on a few
    `--pair-shard-*` slices for the serial rate). Record the read count,

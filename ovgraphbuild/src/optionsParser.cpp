@@ -42,6 +42,7 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
         seqan::ArgParseArgument::INTEGER, "INDEX"));
     seqan::addOption(parser, seqan::ArgParseOption( "", "pair-shard-count", "Number of pair shards.",
         seqan::ArgParseArgument::INTEGER, "COUNT"));
+    seqan::addOption(parser, seqan::ArgParseOption( "", "all-pairs", "Compare every read pair. By default only reads aligned to a common reference are compared: the other pairs cannot overlap, and the output and statistics are the same."));
 
     // Define Options -- Section Misc.
     seqan::addSection(parser, "Misc.");
@@ -92,6 +93,7 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
     seqan::getOptionValue(options.threads, parser, "threads");
     seqan::getOptionValue(options.pairShardIndex, parser, "pair-shard-index");
     seqan::getOptionValue(options.pairShardCount, parser, "pair-shard-count");
+    options.allPairs = seqan::isSet(parser, "all-pairs");
     options.noIndel = seqan::isSet(parser, "no_indel");
 
     if (options.pairShardIndex >= options.pairShardCount)
@@ -156,6 +158,7 @@ int printStartingDebugAndVerboseInfo(AlphaOptions &options)
                   << "PARAM: Threads:            \t" << options.threads << "\n"
                   << "PARAM: Pair shard:         \t" << options.pairShardIndex
                   << "/" << options.pairShardCount << "\n"
+                  << "PARAM: All pairs:          \t" << options.allPairs << "\n"
                   << "PARAM: Debug:              \t" << options.debug << "\n"
                   << "PARAM: Verbose:            \t" << options.verbose << "\n"
                   << "PARAM: Test:               \t" << options.test << "\n" << "\n";

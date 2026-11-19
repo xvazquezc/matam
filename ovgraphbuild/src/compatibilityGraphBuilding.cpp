@@ -1,8 +1,10 @@
 #include "compatibilityGraphBuilding.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -11,6 +13,82 @@ namespace
 {
 constexpr int MAX_WORKER_THREADS = 24;
 constexpr int CHUNKS_PER_WORKER = 8;
+
+/******************************************************************************
+    Which reads share a reference.
+
+    Two reads are compared alignment by alignment, and only alignments on the
+    same reference can make them compatible or incompatible. A pair of reads
+    with no common reference is always "neither compatible nor incompatible"
+    (then counted as incompatible) and never gives an edge. Indexing the reads
+    by reference lets the pair loop visit only the pairs with a common
+    reference and account for the others in bulk.
+******************************************************************************/
+struct ReferenceIndex
+{
+    // Read indices aligned to each reference, ascending. Bucket rID + 1, so
+    // that a record without a reference (rID -1) keeps its own bucket.
+    std::vector<std::vector<int32_t> > readsByRefBucket;
+    // Distinct reference buckets of each read.
+    std::vector<std::vector<int32_t> > refBucketsByRead;
+};
+
+ReferenceIndex buildReferenceIndex(std::vector<std::vector<seqan::BamAlignmentRecord> > const &bamRecordBuffer)
+{
+    if (bamRecordBuffer.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+        throw std::runtime_error("too many mapped reads to index by reference");
+
+    ReferenceIndex index;
+    index.refBucketsByRead.resize(bamRecordBuffer.size());
+
+    int32_t maxBucket = 0;
+    for (size_t read = 0; read < bamRecordBuffer.size(); ++read)
+    {
+        auto &buckets = index.refBucketsByRead[read];
+        for (auto const &bamRecord : bamRecordBuffer[read])
+        {
+            if (bamRecord.rID < -1)
+                throw std::runtime_error("invalid reference ID in SAM record");
+            buckets.push_back(bamRecord.rID + 1);
+        }
+        std::sort(buckets.begin(), buckets.end());
+        buckets.erase(std::unique(buckets.begin(), buckets.end()), buckets.end());
+        if (!buckets.empty())
+            maxBucket = std::max(maxBucket, buckets.back());
+    }
+
+    index.readsByRefBucket.resize(static_cast<size_t>(maxBucket) + 1);
+    for (size_t read = 0; read < bamRecordBuffer.size(); ++read)
+        for (auto bucket : index.refBucketsByRead[read])
+            index.readsByRefBucket[bucket].push_back(static_cast<int32_t>(read));
+
+    return index;
+}
+
+/******************************************************************************
+    Reads j > i that share at least one reference with read i, ascending.
+    lastSeen[j] == i marks j as already collected for this i.
+******************************************************************************/
+void collectCandidatePartners(std::vector<int32_t> &candidates,
+                              std::vector<int32_t> &lastSeen,
+                              ReferenceIndex const &index,
+                              int32_t i)
+{
+    candidates.clear();
+    for (auto bucket : index.refBucketsByRead[i])
+    {
+        auto const &reads = index.readsByRefBucket[bucket];
+        for (auto it = std::upper_bound(reads.begin(), reads.end(), i); it != reads.end(); ++it)
+        {
+            if (lastSeen[*it] != i)
+            {
+                lastSeen[*it] = i;
+                candidates.push_back(*it);
+            }
+        }
+    }
+    std::sort(candidates.begin(), candidates.end());
+}
 
 struct PairRange
 {
@@ -24,6 +102,7 @@ struct PairChunkResult
     PairRange range;
     GlobalStatistics statistics;
     int64_t completedPairs = 0;
+    int64_t comparedPairs = 0;
     std::string asqgFragment;
     std::string csvEdgesFragment;
     std::string error;
@@ -261,6 +340,10 @@ void buildCompatibilityGraph(TGraph &graph,
         chunkResults.back().range = range;
     }
 
+    ReferenceIndex referenceIndex;
+    if (!options.allPairs)
+        referenceIndex = buildReferenceIndex(bamRecordBuffer);
+
     int workerCount = std::min<int>(cappedThreadCount, chunkResults.size());
     std::vector<std::thread> workers;
     std::string outputBasename(seqan::toCString(options.outputBasename));
@@ -273,6 +356,11 @@ void buildCompatibilityGraph(TGraph &graph,
         {
             workers.emplace_back([&]()
             {
+                std::vector<int32_t> candidates;
+                std::vector<int32_t> lastSeen;
+                if (!options.allPairs)
+                    lastSeen.assign(mappedReadsNum, -1);
+
                 while (!stopWorkers.load())
                 {
                     size_t chunkIndex = nextChunk.fetch_add(1);
@@ -305,31 +393,66 @@ void buildCompatibilityGraph(TGraph &graph,
                                 throw std::runtime_error("could not open CSV chunk fragment");
                         }
 
+                        int64_t progressStep = std::max<int64_t>(1, result.range.pairCount / 1000);
+                        int64_t nextProgress = 0;
+
                         for (int64_t i = result.range.begin; i < result.range.end; ++i)
                         {
-                            for (int64_t j = i + 1; j < mappedReadsNum; ++j)
-                            {
-                                computeReadsPairCompatibility(result.statistics,
-                                                              chunkAsqgFile,
-                                                              chunkCsvEdgesFile,
-                                                              i,
-                                                              j,
-                                                              bamRecordBuffer[i],
-                                                              bamRecordBuffer[j],
-                                                              readNames,
-                                                              options);
-                                ++result.completedPairs;
+                            int64_t partnersNum = mappedReadsNum - 1 - i;
 
-                                if (options.verbose && workerCount == 1)
+                            if (options.allPairs)
+                            {
+                                for (int64_t j = i + 1; j < mappedReadsNum; ++j)
                                 {
-                                    int64_t step = result.completedPairs <= result.range.pairCount / 100.0
-                                        ? std::max<int64_t>(1, result.range.pairCount / 100000)
-                                        : std::max<int64_t>(1, result.range.pairCount / 1000);
-                                    printProgress(std::cout,
-                                                  step,
-                                                  result.completedPairs,
-                                                  result.range.pairCount);
+                                    computeReadsPairCompatibility(result.statistics,
+                                                                  chunkAsqgFile,
+                                                                  chunkCsvEdgesFile,
+                                                                  i,
+                                                                  j,
+                                                                  bamRecordBuffer[i],
+                                                                  bamRecordBuffer[j],
+                                                                  readNames,
+                                                                  options);
                                 }
+                                result.comparedPairs += partnersNum;
+                            }
+                            else
+                            {
+                                collectCandidatePartners(candidates,
+                                                         lastSeen,
+                                                         referenceIndex,
+                                                         static_cast<int32_t>(i));
+                                for (auto j : candidates)
+                                {
+                                    computeReadsPairCompatibility(result.statistics,
+                                                                  chunkAsqgFile,
+                                                                  chunkCsvEdgesFile,
+                                                                  i,
+                                                                  j,
+                                                                  bamRecordBuffer[i],
+                                                                  bamRecordBuffer[j],
+                                                                  readNames,
+                                                                  options);
+                                }
+
+                                // The skipped pairs have no common reference:
+                                // each one is counted exactly as the
+                                // comparison would count it.
+                                int64_t skippedNum = partnersNum - static_cast<int64_t>(candidates.size());
+                                result.statistics.neitherCompatNorIncompatReadPairsNum += skippedNum;
+                                result.statistics.incompatibleReadPairsNum += skippedNum;
+                                result.comparedPairs += candidates.size();
+                            }
+                            result.completedPairs += partnersNum;
+
+                            if (options.verbose && workerCount == 1
+                                && result.completedPairs >= nextProgress)
+                            {
+                                printProgress(std::cout,
+                                              1,
+                                              result.completedPairs,
+                                              result.range.pairCount);
+                                nextProgress = result.completedPairs + progressStep;
                             }
                         }
 
@@ -378,6 +501,7 @@ void buildCompatibilityGraph(TGraph &graph,
     }
 
     int64_t completedPairs = 0;
+    int64_t comparedPairs = 0;
     for (auto const &result : chunkResults)
     {
         if (options.outputASQG && !appendFile(asqgFile, result.asqgFragment))
@@ -392,6 +516,7 @@ void buildCompatibilityGraph(TGraph &graph,
         }
 
         completedPairs += result.completedPairs;
+        comparedPairs += result.comparedPairs;
         mergeCompatibilityStatistics(globalStats, result.statistics);
     }
 
@@ -415,6 +540,8 @@ void buildCompatibilityGraph(TGraph &graph,
                      << "outer_end\t" << shardRange.end << "\n"
                      << "assigned_pair_count\t" << shardRange.pairCount << "\n"
                      << "completed_pair_count\t" << completedPairs << "\n"
+                     << "compared_pair_count\t" << comparedPairs << "\n"
+                     << "all_pairs\t" << (options.allPairs ? 1 : 0) << "\n"
                      << "requested_threads\t" << options.threads << "\n"
                      << "thread_limit\t" << MAX_WORKER_THREADS << "\n"
                      << "threads\t" << workerCount << "\n"
@@ -429,7 +556,10 @@ void buildCompatibilityGraph(TGraph &graph,
                   << ", " << shardRange.end << ")\n"
                   << "INFO: Assigned read pairs: " << shardRange.pairCount
                   << "/" << maxReadsPairs << "\n"
-                  << "INFO: Completed read pairs: " << completedPairs << "\n\n";
+                  << "INFO: Completed read pairs: " << completedPairs << "\n"
+                  << "INFO: Compared read pairs: " << comparedPairs
+                  << (options.allPairs ? " (all pairs)" : " (with a common reference)")
+                  << "\n\n";
     }
 }
 

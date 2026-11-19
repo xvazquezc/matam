@@ -763,6 +763,22 @@ Before the change it failed: 1,457 vs 2,914 nodes.
   (spanning pair goes to both, one-mate pairs, routing log line, CASAVA);
   `test_functional_pe.py` compares the routing counts across namings.
 
+### 21. [ ] A read with an IUPAC base stops the run at alignment filtering
+- Found 2026-11-12 while building the graph benchmark: ART reads simulated
+  from SILVA sequences keep their IUPAC codes (`K`, `R`, `Y`, ...). SortMeRNA
+  writes those bases as `N` in the SAM SEQ, so `sam_mates.py`
+  (`_sequence_matches`, exact comparison with the `--out2` read) raises
+  `SAM SEQ of <read> does not match its read` and the run stops
+  (`AF053889.1.1504-3523/1`: `...GCCGGKGAT...` in the FASTQ, `...GCCGGNGAT...`
+  in the SAM).
+- `validate_paired_fastq` doesn't check the sequence alphabet, so the input
+  passes validation and fails after the mapping.
+- Real Illumina reads only carry ACGTN, so this mostly hits simulated or
+  edited reads. Possible fixes: compare with non-ACGT read bases read as `N`
+  in `_sequence_matches`, or reject non-ACGTN bases (naming the record) in
+  `validate_paired_fastq`.
+- Not fixed yet. The benchmark replaces IUPAC codes in the simulated taxa.
+
 ---
 
 ## Tier 2: characterization tests (no bugs found, high impact on results)
@@ -876,3 +892,5 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | Tier 3 | Quality encoding checked on the first 1,000 pairs only (structure and pairing still on every read): 1.9 s plain / 4.4 s gz for 2 M pairs. Suite 279 passed, 6 skipped |
 | 2026-11-11 | — | Legacy removed: `.travis.yml` and `travis_download_db.sh` (Travis CI shut down; `bioinfo.lifl.fr` unreachable); `index_default_ssu_rrna_db.py` and the SILVA 128 default `-d` (`bioinfo.univ-lille.fr` unreachable): `-d` is now required, as is `index_ref_db.py -i`. README and MarkerMAG-nf hints point to `matam_db_preprocessing.py` with SILVA 138.2. `test_functional.py` (always skipped) replaced by a mini-db taxonomy/Krona test. Suite 280 passed, 0 skipped |
 | 2026-11-11 | — | Historical upstream material removed from `eval_and_release/` (2019 developer README in .md/.html, release-comparison logs/PDFs/notebook for v0.9.7-v1.6.0, Docker test script, `dataset`/`db` symlinks, error-rate figure; 1,013 files, ~6 MB). The paired-end evaluation moved to `evaluation/paired_end_assembly/` (README link and its commands updated) |
+| 2026-11-12 | — | `ovgraphbuild` candidate-pair pruning (default; `--all-pairs` keeps the old loop): only reads sharing a reference are compared, skipped pairs added to neither/incompatible. Edges, nodes and statistics byte-identical on 162k-mate SILVA-subset sets (52 M / 83 M edges); 24 threads 1.40× / 1.28× wall, single-thread shards 1.4-2.3×. 12 new tests; ASan/UBSan clean. Suite 292 passed |
+| 2026-11-12 | #21 | Found while simulating the benchmark: a read with an IUPAC base (copied from SILVA by ART) stops the run at alignment filtering (`SAM SEQ ... does not match its read`; SortMeRNA writes it as N). Not fixed |
