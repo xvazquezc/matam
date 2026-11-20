@@ -228,3 +228,66 @@ def test_reads_without_common_reference_are_not_compared(tmp_path):
     assert edges == [['0', '1'], ['2', '3']]
     assert read_bytes(str(tmp_path / 'pruned') + '.edges.csv') == \
         read_bytes(str(tmp_path / 'full') + '.edges.csv')
+
+
+def make_lopsided_inputs(tmp_path, lone_reads=200, shared_reads=200):
+    """Reads 0..lone_reads-1 each alone on a reference; the others share one.
+
+    Balanced by pair count, the first shards get the lone reads, which have
+    the most partners but nothing to compare, and the last shard gets every
+    comparison.
+    """
+    rng = random.Random(11)
+    reference = tmp_path / 'refs.fasta'
+    sam = tmp_path / 'reads.sam'
+    refs = [''.join(rng.choice(BASES) for _ in range(300)) for _ in range(lone_reads + 1)]
+    with reference.open('w') as handle:
+        handle.write(''.join('>ref{}\n{}\n'.format(i, s) for i, s in enumerate(refs)))
+    with sam.open('w') as handle:
+        handle.write('@HD\tVN:1.0\n')
+        handle.write(''.join('@SQ\tSN:ref{}\tLN:300\n'.format(i) for i in range(len(refs))))
+        for read in range(lone_reads + shared_reads):
+            ref_id = read if read < lone_reads else lone_reads
+            pos = 1 if read < lone_reads else 1 + rng.randrange(200)
+            handle.write('\t'.join(['read{:04d}'.format(read), '0', 'ref{}'.format(ref_id), str(pos),
+                                    '255', '100M', '*', '0', '0', refs[ref_id][pos - 1:pos + 99],
+                                    '*']) + '\n')
+    return reference, sam
+
+
+def shard_metadata(tmp_path, reference, sam, shard_count, *extra):
+    merged, metadata = [], []
+    for shard in range(shard_count):
+        prefix = tmp_path / 'shard-{}'.format(shard)
+        run(reference, sam, prefix, '--pair-shard-index', str(shard),
+            '--pair-shard-count', str(shard_count), *extra)
+        with open(str(prefix) + '.edges.csv') as handle:
+            merged.extend(handle.readlines()[1:])
+        with open(str(prefix) + '.pair-shard.tsv') as handle:
+            metadata.append({k: int(v) for k, v in (line.rstrip('\n').split('\t') for line in handle)})
+    return merged, metadata
+
+
+def test_shards_are_balanced_by_comparisons_not_pairs(tmp_path):
+    reference, sam = make_lopsided_inputs(tmp_path)
+    run(reference, sam, tmp_path / 'full', '--all-pairs')
+    merged, metadata = shard_metadata(tmp_path, reference, sam, 4)
+
+    with open(str(tmp_path / 'full') + '.edges.csv') as handle:
+        assert merged == handle.readlines()[1:]
+    compared = [m['compared_pair_count'] for m in metadata]
+    assert sum(compared) == 200 * 199 // 2
+    assert min(compared) > 0.8 * max(compared)    # by pair count: [0, 0, 0, 19900]
+    # Work: 1 per read plus one per (later read, shared reference).
+    assert metadata[0]['total_work'] == 399 + 200 * 199 // 2
+    assert sum(m['assigned_work'] for m in metadata) == metadata[0]['total_work']
+    assert sum(m['assigned_pair_count'] for m in metadata) == 400 * 399 // 2
+
+
+def test_all_pairs_shards_stay_balanced_by_pair_count(tmp_path):
+    reference, sam = make_lopsided_inputs(tmp_path)
+    _, metadata = shard_metadata(tmp_path, reference, sam, 4, '--all-pairs')
+
+    assert all(m['assigned_work'] == m['assigned_pair_count'] for m in metadata)
+    pairs = [m['assigned_pair_count'] for m in metadata]
+    assert min(pairs) > 0.95 * max(pairs)

@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-from pe_fixtures import NAMING_STYLES, ROOT_DIR, SCRIPTS_DIR, build_mini_db, tool_env, write_pe_reads
+from pe_fixtures import (NAMING_STYLES, ROOT_DIR, SCRIPTS_DIR, build_mini_db, iter_example_pairs,
+                         tool_env, write_pe_reads)
 
 OVGRAPHBUILD = ROOT_DIR / 'ovgraphbuild' / 'bin' / 'ovgraphbuild'
 COMPONENTSEARCH = ROOT_DIR / 'componentsearch' / 'componentsearch'
@@ -547,3 +548,25 @@ def test_taxonomic_assignment_and_krona(pe_workspace, tmp_path):
     assert sorted(rdp_ids) == sorted(scaffolds)
     assert (out_dir / 'krona.tab').read_text().strip()
     assert '<html' in (out_dir / 'krona.html').read_text().lower()
+
+
+def test_reads_with_ambiguous_bases_are_assembled(pe_workspace, tmp_path):
+    # An IUPAC base (K, R, ...) in a read stopped the run at alignment
+    # filtering: SortMeRNA writes it as N in the SAM, and the mate tagging
+    # compared SEQ with the read exactly. SGA later discards those pairs, as it
+    # does pairs with an N.
+    base, db = pe_workspace
+
+    def pairs():
+        for index, (core_id, (seq1, qual1), mate2) in enumerate(
+                iter_example_pairs(every=PAIR_SUBSAMPLING)):
+            if index % 10 == 0:
+                seq1 = seq1[:50] + 'KRYMSWBDHV'[index // 10 % 10] + seq1[51:]
+            yield core_id, (seq1, qual1), mate2
+
+    forward, reverse = write_pe_reads(tmp_path / 'reads', 'legacy', pairs=pairs())
+    out_dir = tmp_path / 'out'
+    code, log = _matam(forward, reverse, db, out_dir, keep_tmp=False)
+    assert code == 0, log[-4000:]
+    abundances = _abundance(out_dir / 'final_assembly.fa')   # needs the mate tagging too
+    assert abundances and all(count > 0 for _, count in abundances)

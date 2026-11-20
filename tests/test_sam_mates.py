@@ -138,3 +138,52 @@ def test_cli_reports_pair_files_out_of_step(tmp_path, capsys):
     assert sam_mates.main(['-s', str(sam), '-1', str(forward), '-2', str(reverse),
                            '-o', str(tmp_path / 'o.sam')]) == 1
     assert 'different record counts' in capsys.readouterr().err
+
+
+def with_base(seq, index, base):
+    return seq[:index] + base + seq[index + 1:]
+
+
+def test_ambiguous_read_bases_match_the_n_written_by_sortmerna():
+    # SortMeRNA writes every base other than A, C, G, T as N in SEQ; the reads
+    # keep the IUPAC code (K, R, ...) or lower-case letters they had.
+    r1 = with_base(R1_SEQ, 5, 'K')
+    r2 = with_base(with_base(R2_SEQ, 3, 'r'), 12, 'Y')
+    sam = [sam_line('pair1', 0, 'ref1', 1, with_base(R1_SEQ, 5, 'N')),
+           sam_line('pair1', 16, 'ref1', 31,
+                    sam_mates.reverse_complement(with_base(with_base(R2_SEQ, 3, 'N'), 12, 'N')))]
+
+    tagged = tag(sam, [(('pair1', r1), ('pair1', r2))])
+
+    assert [sam_mates.mate_of(r[1]) for r in tagged] == [1, 2]
+    assert [r[9] for r in tagged] == [fields.split('\t')[9] for fields in sam]  # SEQ untouched
+
+
+def test_ambiguous_base_in_a_legacy_named_pair():
+    # The run that found the bug: AF053889.1.1504-3523/1 had ...GCCGGKGAT... in
+    # the FASTQ and ...GCCGGNGAT... in the SAM.
+    r1 = with_base(R1_SEQ, 10, 'K')
+    sam = [sam_line('read/1', 0, 'ref1', 1, with_base(R1_SEQ, 10, 'N'))]
+
+    tagged = tag(sam, [(('read/1', r1), ('read/2', R2_SEQ))])
+
+    assert [sam_mates.mate_of(r[1]) for r in tagged] == [1]
+
+
+def test_ambiguous_base_in_a_hard_clipped_record():
+    r1 = with_base(R1_SEQ, 8, 'W')
+    fields = sam_line('pair1', 0, 'ref1', 6, with_base(R1_SEQ, 8, 'N')[5:]).split('\t')
+    fields[5] = '5H15M'
+
+    tagged = tag(['\t'.join(fields)], [(('pair1', r1), ('pair1', R2_SEQ))])
+
+    assert [sam_mates.mate_of(r[1]) for r in tagged] == [1]
+
+
+@pytest.mark.parametrize('sam_base, read_base', [('A', 'K'), ('N', 'A')])
+def test_ambiguous_bases_match_only_n(sam_base, read_base):
+    # An IUPAC read base matches N only, and an N in SEQ matches no plain base:
+    # the read is still a different sequence.
+    sam = [sam_line('read/1', 0, 'ref1', 1, with_base(R1_SEQ, 5, sam_base))]
+    with pytest.raises(sam_mates.MateTaggingError, match='does not match its read'):
+        tag(sam, [(('read/1', with_base(R1_SEQ, 5, read_base)), ('read/2', R2_SEQ))])

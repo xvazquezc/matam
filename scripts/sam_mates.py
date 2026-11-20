@@ -22,6 +22,7 @@ a hard error instead of a silent misassignment.
 
 import argparse
 import gzip
+import re
 import sys
 
 PAIRED = 0x1
@@ -112,15 +113,31 @@ def _record_groups(sam_lines, header_out):
         yield qname, group
 
 
+_NON_ACGT = re.compile('[^ACGT]')
+
+
+def _as_acgtn(sequence):
+    """Upper-case sequence with every base other than A, C, G, T written as N."""
+    return _NON_ACGT.sub('N', sequence.upper())
+
+
 def _sequence_matches(fields, read_sequence):
+    """True if the SAM SEQ is the read (or, when hard-clipped, part of it).
+
+    SortMeRNA writes every base other than A, C, G, T (IUPAC codes such as K or
+    R, or any other character) as N, so both sequences are compared in that
+    form. The exact comparison comes first: it is the usual case and cheaper.
+    """
     sequence = fields[9]
     if sequence == '*':
         return False
     oriented = reverse_complement(sequence) if int(fields[1]) & REVERSE else sequence
     oriented, read_sequence = oriented.upper(), read_sequence.upper()
     if 'H' in fields[5]:  # hard-clipped records only carry part of the read
-        return oriented in read_sequence
-    return oriented == read_sequence
+        return oriented in read_sequence or _as_acgtn(oriented) in _as_acgtn(read_sequence)
+    if oriented == read_sequence:
+        return True
+    return len(oriented) == len(read_sequence) and _as_acgtn(oriented) == _as_acgtn(read_sequence)
 
 
 def _assign(fields, pair):

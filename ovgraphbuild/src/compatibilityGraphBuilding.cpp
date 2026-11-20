@@ -95,6 +95,7 @@ struct PairRange
     int64_t begin;
     int64_t end;
     int64_t pairCount;
+    int64_t work;
 };
 
 struct PairChunkResult
@@ -129,10 +130,52 @@ int64_t balancedTarget(int64_t begin,
     return begin + quotient * partIndex + std::min<int64_t>(partIndex, remainder);
 }
 
-int64_t nearestOuterBoundary(int64_t readCount,
+/******************************************************************************
+    Expected work of the outer indices, to balance shards and thread chunks.
+
+    workBefore[k] is the work of the outer indices 0..k-1 (k = 0..n-1); a
+    range [begin, end) costs workBefore[end] - workBefore[begin].
+
+    - All pairs: read i is compared with its n-1-i partners, so the work is
+      the pair count.
+    - Common-reference pairs (default): read i costs one alignment-pair
+      comparison per (later read, shared reference), plus 1 for the read
+      itself (collecting the partners, accounting for the skipped pairs).
+      Balancing by the pair count instead put most of the comparisons in a
+      few ranges: reads differ widely in how many reads share a reference.
+******************************************************************************/
+std::vector<int64_t> outerWorkPrefix(int64_t readCount,
+                                     bool allPairs,
+                                     ReferenceIndex const &index)
+{
+    int64_t outerCount = std::max<int64_t>(0, readCount - 1);
+    std::vector<int64_t> workBefore(static_cast<size_t>(outerCount) + 1, 0);
+    for (int64_t i = 0; i < outerCount; ++i)
+    {
+        int64_t work;
+        if (allPairs)
+        {
+            work = readCount - 1 - i;
+        }
+        else
+        {
+            work = 1;
+            for (auto bucket : index.refBucketsByRead[i])
+            {
+                auto const &reads = index.readsByRefBucket[bucket];
+                work += reads.end() - std::upper_bound(reads.begin(), reads.end(),
+                                                       static_cast<int32_t>(i));
+            }
+        }
+        workBefore[i + 1] = workBefore[i] + work;
+    }
+    return workBefore;
+}
+
+int64_t nearestOuterBoundary(std::vector<int64_t> const &workBefore,
                              int64_t minOuterIndex,
                              int64_t maxOuterIndex,
-                             int64_t targetPairCount)
+                             int64_t targetWork)
 {
     int64_t low = minOuterIndex;
     int64_t high = maxOuterIndex;
@@ -140,7 +183,7 @@ int64_t nearestOuterBoundary(int64_t readCount,
     while (low < high)
     {
         int64_t mid = low + (high - low) / 2;
-        if (pairsBefore(readCount, mid) < targetPairCount)
+        if (workBefore[mid] < targetWork)
             low = mid + 1;
         else
             high = mid;
@@ -149,8 +192,8 @@ int64_t nearestOuterBoundary(int64_t readCount,
     if (low > minOuterIndex)
     {
         int64_t previous = low - 1;
-        int64_t previousDistance = targetPairCount - pairsBefore(readCount, previous);
-        int64_t currentDistance = pairsBefore(readCount, low) - targetPairCount;
+        int64_t previousDistance = targetWork - workBefore[previous];
+        int64_t currentDistance = workBefore[low] - targetWork;
         if (previousDistance <= currentDistance)
             return previous;
     }
@@ -159,20 +202,22 @@ int64_t nearestOuterBoundary(int64_t readCount,
 }
 
 PairRange partitionPairRange(int64_t readCount,
+                             std::vector<int64_t> const &workBefore,
                              int64_t outerBegin,
                              int64_t outerEnd,
                              int partIndex,
                              int partCount)
 {
-    int64_t pairBegin = pairsBefore(readCount, outerBegin);
-    int64_t pairEnd = pairsBefore(readCount, outerEnd);
-    int64_t beginTarget = balancedTarget(pairBegin, pairEnd, partIndex, partCount);
-    int64_t endTarget = balancedTarget(pairBegin, pairEnd, partIndex + 1, partCount);
+    int64_t workBegin = workBefore[outerBegin];
+    int64_t workEnd = workBefore[outerEnd];
+    int64_t beginTarget = balancedTarget(workBegin, workEnd, partIndex, partCount);
+    int64_t endTarget = balancedTarget(workBegin, workEnd, partIndex + 1, partCount);
 
-    int64_t begin = nearestOuterBoundary(readCount, outerBegin, outerEnd, beginTarget);
-    int64_t end = nearestOuterBoundary(readCount, begin, outerEnd, endTarget);
+    int64_t begin = nearestOuterBoundary(workBefore, outerBegin, outerEnd, beginTarget);
+    int64_t end = nearestOuterBoundary(workBefore, begin, outerEnd, endTarget);
 
-    return PairRange{begin, end, pairsBefore(readCount, end) - pairsBefore(readCount, begin)};
+    return PairRange{begin, end, pairsBefore(readCount, end) - pairsBefore(readCount, begin),
+                     workBefore[end] - workBefore[begin]};
 }
 
 void mergeCompatibilityStatistics(GlobalStatistics &destination,
@@ -247,7 +292,14 @@ void buildCompatibilityGraph(TGraph &graph,
     int64_t mappedReadsNum = bamRecordBuffer.size();
     int64_t maxReadsPairs = totalPairs(mappedReadsNum);
     int64_t outerEnd = std::max<int64_t>(0, mappedReadsNum - 1);
+    ReferenceIndex referenceIndex;
+    if (!options.allPairs)
+        referenceIndex = buildReferenceIndex(bamRecordBuffer);
+    std::vector<int64_t> workBefore = outerWorkPrefix(mappedReadsNum,
+                                                      options.allPairs,
+                                                      referenceIndex);
     PairRange shardRange = partitionPairRange(mappedReadsNum,
+                                              workBefore,
                                               0,
                                               outerEnd,
                                               options.pairShardIndex,
@@ -329,6 +381,7 @@ void buildCompatibilityGraph(TGraph &graph,
     for (int chunkIndex = 0; chunkIndex < targetChunkCount; ++chunkIndex)
     {
         PairRange range = partitionPairRange(mappedReadsNum,
+                                             workBefore,
                                              shardRange.begin,
                                              shardRange.end,
                                              chunkIndex,
@@ -339,10 +392,6 @@ void buildCompatibilityGraph(TGraph &graph,
         chunkResults.emplace_back();
         chunkResults.back().range = range;
     }
-
-    ReferenceIndex referenceIndex;
-    if (!options.allPairs)
-        referenceIndex = buildReferenceIndex(bamRecordBuffer);
 
     int workerCount = std::min<int>(cappedThreadCount, chunkResults.size());
     std::vector<std::thread> workers;
@@ -539,6 +588,8 @@ void buildCompatibilityGraph(TGraph &graph,
                      << "outer_begin\t" << shardRange.begin << "\n"
                      << "outer_end\t" << shardRange.end << "\n"
                      << "assigned_pair_count\t" << shardRange.pairCount << "\n"
+                     << "assigned_work\t" << shardRange.work << "\n"
+                     << "total_work\t" << workBefore[outerEnd] << "\n"
                      << "completed_pair_count\t" << completedPairs << "\n"
                      << "compared_pair_count\t" << comparedPairs << "\n"
                      << "all_pairs\t" << (options.allPairs ? 1 : 0) << "\n"

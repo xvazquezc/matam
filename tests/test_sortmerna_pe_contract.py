@@ -79,3 +79,50 @@ def test_paired_fastx_output_is_two_files_in_step_and_in_input_order(casava_mapp
     assert all(r1 == r2 for r1, r2 in output)  # CASAVA: mates share the ID
     positions = [input_order.index(r1) for r1, _ in output]
     assert positions == sorted(positions)
+
+
+AMBIGUOUS = 'KRYMSWBDHV'
+
+
+def with_ambiguous_bases(pairs):
+    """Every other pair gets an IUPAC code in R1 and a lower-case base in R2."""
+    for index, (core_id, (seq1, qual1), (seq2, qual2)) in enumerate(pairs):
+        if index % 2 == 0:
+            code = AMBIGUOUS[(index // 2) % len(AMBIGUOUS)]
+            seq1 = seq1[:40] + code + seq1[41:]
+            seq2 = seq2[:60] + seq2[60].lower() + seq2[61:]
+        yield core_id, (seq1, qual1), (seq2, qual2)
+
+
+@pytest.mark.parametrize('style', ['casava', 'legacy'])
+def test_ambiguous_read_bases_are_written_as_n_and_still_tagged(tmp_path, style):
+    """SortMeRNA writes IUPAC codes as N in SEQ and keeps them in its FASTQ.
+
+    MATAM compares SEQ with the FASTQ reads to tell the mates apart, so the
+    comparison must read any base other than A, C, G, T as N.
+    """
+    reference = write_reference_fasta(tmp_path / 'refs.fasta')
+    forward, reverse = write_pe_reads(
+        tmp_path, style, pairs=with_ambiguous_bases(iter_example_pairs(every=10)))
+    prefix = tmp_path / 'aligned'
+    subprocess.run(
+        [SORTMERNA, '--ref', str(reference), '--workdir', str(tmp_path / 'wd'),
+         '--reads', str(forward), '--reads', str(reverse), '--paired_in', '--out2',
+         '--aligned', str(prefix), '--fastx', '--sam', '--blast', '1',
+         '--num_alignments', '10', '-e', '1e-5', '--threads', '2'],
+        check=True, capture_output=True, text=True)
+    sam = Path(str(prefix) + '.sam')
+    aligned_reads = (Path(str(prefix) + '_fwd.fq'), Path(str(prefix) + '_rev.fq'))
+
+    with open(sam) as handle:
+        raw = sam_records(handle)
+    sequences = {seq for r1, r2 in sam_mates.iter_separate_pairs(*aligned_reads)
+                 for _, seq in (r1, r2)}
+    assert any(set(seq) & set(AMBIGUOUS) for seq in sequences)  # kept in the FASTQ
+    assert any(seq != seq.upper() for seq in sequences)
+    assert {base for record in raw for base in record[9]} <= set('ACGTN')  # N in SEQ
+
+    with open(sam) as handle:
+        tagged = sam_records(sam_mates.tag_mates(handle, sam_mates.iter_separate_pairs(*aligned_reads)))
+    assert len(tagged) == len(raw)
+    assert {sam_mates.mate_of(record[1]) for record in tagged} == {1, 2}

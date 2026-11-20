@@ -763,7 +763,7 @@ Before the change it failed: 1,457 vs 2,914 nodes.
   (spanning pair goes to both, one-mate pairs, routing log line, CASAVA);
   `test_functional_pe.py` compares the routing counts across namings.
 
-### 21. [ ] A read with an IUPAC base stops the run at alignment filtering
+### 21. [x] A read with an IUPAC base stops the run at alignment filtering
 - Found 2026-11-12 while building the graph benchmark: ART reads simulated
   from SILVA sequences keep their IUPAC codes (`K`, `R`, `Y`, ...). SortMeRNA
   writes those bases as `N` in the SAM SEQ, so `sam_mates.py`
@@ -777,7 +777,46 @@ Before the change it failed: 1,457 vs 2,914 nodes.
   edited reads. Possible fixes: compare with non-ACGT read bases read as `N`
   in `_sequence_matches`, or reject non-ACGTN bases (naming the record) in
   `validate_paired_fastq`.
-- Not fixed yet. The benchmark replaces IUPAC codes in the simulated taxa.
+- **Fixed 2026-11-20:** `_sequence_matches` compares SEQ and read with every
+  base other than A, C, G, T written as `N`, as SortMeRNA does (after the
+  exact comparison, which stays the fast path; also for hard-clipped
+  records). The same code tags mates in the abundance step.
+  - The reads are not edited: the only other step that reads the FASTQ bases
+    is SGA, and `sga preprocess` discards a pair with `K` or `k` exactly as
+    one with `N` (checked). The graph uses the SAM SEQ, already `N`.
+  - Rejecting such reads in `validate_paired_fastq` was not chosen: it would
+    stop runs on input that MATAM can handle.
+- **Tests:** `test_sam_mates.py` (5: IUPAC and lower-case bases on both
+  strands, a legacy `/1` pair, a hard-clipped record, and IUPAC vs plain or `N`
+  vs plain still failing); `test_sortmerna_pe_contract.py` (real SortMeRNA,
+  CASAVA and legacy names: IUPAC kept in its FASTQ, `N` in SEQ, every record
+  tagged); `test_functional_pe.py::test_reads_with_ambiguous_bases_are_assembled`
+  (a full run with an IUPAC code in every tenth pair). The unit and contract
+  tests fail without the fix, with the error of the original run.
+
+### 22. [x] ovgraphbuild's SeqAn update check can stall a run for most of an hour
+- Found 2026-11-20: the overlap-graph step of a test run took 2,827 s for
+  2,914 reads. ovgraphbuild had written its graph and statistics after 4 s,
+  and the machine was idle the rest of the time; reruns took 0.3 s.
+- Cause: SeqAn's argument parser checks for updates once a day per user
+  (`~/.config/seqan/ovgraphbuild_usr.timestamp`, written at 09:28:22, the
+  second the stalled step started). A detached thread runs
+  `system("wget -q -O ~/.config/seqan/ovgraphbuild.version
+  http://seqan-update.informatik.uni-tuebingen.de/...")`. The `sh` started
+  by `system()` keeps ovgraphbuild's stdout open while wget waits on the
+  server, so whoever reads that stdout through a pipe (MATAM's runner with
+  `-v`, pytest's `capture_output`) waits for wget too, even after
+  ovgraphbuild has exited.
+- It also sent a request to an outside server on every user's first run of
+  the day, and would hit any HPC job that reads ovgraphbuild's output.
+- **Fixed:** `ovgraphbuild/CMakeLists.txt` defines
+  `SEQAN_DISABLE_VERSION_CHECK` (`build.py` and the MarkerMAG-nf image build
+  through it). The `--version-check` option is gone, and the binary no
+  longer contains the server address. No other MATAM tool uses SeqAn's
+  argument parser.
+- **Test:** `test_ovgraphbuild_parallel.py::test_no_update_check_holds_the_output_open`
+  runs ovgraphbuild with a fresh `HOME` and fake `wget`/`curl` that hang. The
+  old binary blocks until the 30 s timeout; the new one never calls them.
 
 ---
 
@@ -894,3 +933,6 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-11 | — | Historical upstream material removed from `eval_and_release/` (2019 developer README in .md/.html, release-comparison logs/PDFs/notebook for v0.9.7-v1.6.0, Docker test script, `dataset`/`db` symlinks, error-rate figure; 1,013 files, ~6 MB). The paired-end evaluation moved to `evaluation/paired_end_assembly/` (README link and its commands updated) |
 | 2026-11-12 | — | `ovgraphbuild` candidate-pair pruning (default; `--all-pairs` keeps the old loop): only reads sharing a reference are compared, skipped pairs added to neither/incompatible. Edges, nodes and statistics byte-identical on 162k-mate SILVA-subset sets (52 M / 83 M edges); 24 threads 1.40× / 1.28× wall, single-thread shards 1.4-2.3×. 12 new tests; ASan/UBSan clean. Suite 292 passed |
 | 2026-11-12 | #21 | Found while simulating the benchmark: a read with an IUPAC base (copied from SILVA by ART) stops the run at alignment filtering (`SAM SEQ ... does not match its read`; SortMeRNA writes it as N). Not fixed |
+| 2026-11-20 | #21 | Fixed: `sam_mates._sequence_matches` compares SEQ and read with non-ACGT bases as N (as SortMeRNA writes them), exact comparison kept as the fast path. Reads not edited: SGA discards K/k pairs like N pairs. 8 new tests (unit, real-SortMeRNA contract for CASAVA/legacy names, full run with IUPAC reads); unit and contract tests fail without the fix. Suite 300 passed |
+| 2026-11-20 | — | `ovgraphbuild` shards and thread chunks balanced by expected work (1 + later reads per shared reference) instead of pair count; `--all-pairs` unchanged; shard metadata `assigned_work`/`total_work`. Outputs byte-identical on the SILVA-subset sets (rebuilt after /tmp was cleared, same SAM record counts). 24 threads: mixed 402 → 304 s, skewed 531 → 481 s; 16 shards max/mean CPU 3.04 → 1.45 and 2.24 → 1.44. Remaining imbalance follows the compatible pairs (~74% of CPU). 2 new tests; ASan/UBSan clean. Suite 303 passed |
+| 2026-11-20 | #22 | SeqAn update check disabled at compile time (`SEQAN_DISABLE_VERSION_CHECK`): its background `wget` held ovgraphbuild's stdout open and stalled a test run's graph step for 47 min. 1 new test (fake hanging wget/curl, fresh HOME; old binary times out) |

@@ -183,9 +183,34 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      samples in the seqan DP code and about a third in seqan string iterators.
      Its attribution of anonymous-namespace symbols is unreliable, and
      `-fno-inline` inflates the iterator cost.
+   - **Done (2026-11-20): shards and thread chunks balanced by expected
+     work, not pair count.**
+     - Work of read i: 1, plus one per (later read, shared reference),
+       computed from the reference index with binary searches.
+     - `--all-pairs` still balances by pair count. Shard metadata gains
+       `assigned_work` and `total_work`. Outputs are unchanged.
+     - Benchmark (same sets; 16 shards run at once at 1 thread each):
+
+       | Set | 24 threads, wall | Busy threads | Slowest shard (CPU) | Shard max/mean |
+       |---|---:|---:|---:|---:|
+       | mixed | 402 → 304 s (1.32×) | 15.7 → 21.7 | 867 → 457 s | 3.04 → 1.45 |
+       | skewed | 531 → 481 s (1.10×) | 19.9 → 22.1 | 996 → 711 s | 2.24 → 1.44 |
+
+       Compared pairs per shard went from 13.6-75.0 M to 20.9-34.0 M
+       (mixed) and from 11.9-78.0 M to 42.8-50.7 M (skewed).
+     - **What is left of the imbalance:** shard CPU now follows the number
+       of compatible pairs (edges), not the comparisons. A least-squares
+       fit over the 16 shards (no intercept, R² 0.96-0.97) gives 2.6-2.9 s
+       per M comparisons and about 72 s per M compatible pairs (the de novo
+       DP): the compatible pairs are 74-76% of the CPU.
+     - Tests: `test_ovgraphbuild_pair_pruning.py` (lopsided input: by pair
+       count, 4 shards compare `[0, 0, 0, 19900]` pairs; now each about a
+       quarter), and `--all-pairs` keeps pair-count shards.
    - **Possible follow-ups:**
-     - balance thread chunks and shards by candidate count rather than by
-       theoretical pair count (busy threads ≈ 16 of 24 on skewed);
+     - weight the balancing by an estimate of compatible pairs: count the
+       later reads that overlap by >= `minOverlap` on a shared reference
+       (interval counting on sorted starts). The same count could prune the
+       pairs that share a reference but can't overlap;
      - make the de novo check cheaper: a banded alignment around the known
        offset, or skip it when the reference overlap is already exact.
        Either change could alter the output, so it needs its own equivalence

@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -188,3 +189,30 @@ def test_rejects_invalid_shard_index(graph_inputs, tmp_path):
 
     assert result.returncode != 0
     assert '--pair-shard-index must be smaller' in result.stderr
+
+
+def test_no_update_check_holds_the_output_open(graph_inputs, tmp_path):
+    # SeqAn's argument parser ran `wget ... seqan-update...` once a day in the
+    # background; the call kept stdout open, so MATAM's runner (reading it
+    # through a pipe) waited until wget gave up: 47 min once. A fake wget that
+    # hangs must never be called, with a HOME where no check was ever done.
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    marker = tmp_path / 'called'
+    for tool in ('wget', 'curl'):
+        script = fake_bin / tool
+        script.write_text('#!/bin/sh\ntouch {}\nsleep 60\n'.format(marker))
+        script.chmod(0o755)
+    env = dict(os.environ, HOME=str(tmp_path / 'home'),
+               PATH='{}:{}'.format(fake_bin, os.environ['PATH']))
+    (tmp_path / 'home').mkdir()
+
+    started = time.monotonic()
+    reference, sam = graph_inputs
+    subprocess.run([OVGRAPHBUILD, '--reference', str(reference), '--sam', str(sam), '--csv',
+                    '--output_basename', str(tmp_path / 'out'), '--min_overlap', '50', '-v'],
+                   env=env, check=True, capture_output=True, timeout=30)
+
+    assert time.monotonic() - started < 20
+    assert not marker.exists()
+    assert not (tmp_path / 'home' / '.config' / 'seqan').exists()

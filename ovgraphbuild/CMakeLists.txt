@@ -10,6 +10,11 @@ find_program(CMAKE_CXX_COMPILER NAMES $ENV{CXX} g++ PATHS ENV PATH NO_DEFAULT_PA
 project (ovgraphbuild C CXX)
 
 include_directories ("lib/seqan/include")
+# SeqAn's argument parser otherwise checks for updates once a day: it runs wget
+# (or curl) against seqan-update.informatik.uni-tuebingen.de in the background,
+# and that call keeps ovgraphbuild's stdout open, so a caller reading it through
+# a pipe (MATAM's runner, pytest) waits until wget gives up (47 min once).
+add_definitions(-DSEQAN_DISABLE_VERSION_CHECK)
 set (PROJECT_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 file(GLOB SOURCE_FILES "${PROJECT_SOURCE_DIR}/*.cpp" "${PROJECT_SOURCE_DIR}/*.h")
