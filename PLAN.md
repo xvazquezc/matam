@@ -211,10 +211,43 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        later reads that overlap by >= `minOverlap` on a shared reference
        (interval counting on sorted starts). The same count could prune the
        pairs that share a reference but can't overlap;
-     - make the de novo check cheaper: a banded alignment around the known
-       offset, or skip it when the reference overlap is already exact.
-       Either change could alter the output, so it needs its own equivalence
-       tests.
+     - ~~make the de novo check cheaper~~: done exactly, see below.
+   - **Done (2026-11-20, not committed yet): perfect overlaps skip the full
+     de novo alignment.**
+     - **Profile first** (cycle counters on 4 single-thread shards): the
+       SeqAn DP of `align2ReadSequences` was 84-88% of the pair-comparison
+       time; `computeAlignmentStats` and the output were about 1% each (the
+       gprof split above was wrong). 94-97% of re-aligned pairs became edges.
+     - **Why it is exact:** the de novo alignment scores +1/-1/-1 with free
+       end gaps. Every alignment ending at a last-row/column cell E scores at
+       most L, the length of the diagonal from E back to the first
+       row/column, and only the ungapped all-match diagonal reaches L. So when
+       the best score is reached at one end cell only and equals L there,
+       SeqAn has a single optimal alignment to return, with no tie-breaking.
+     - **How:** `perfectOverlap.cpp` computes the score only, 16 cells of an
+       anti-diagonal at a time (GCC vector extensions; plain SSE2 on the
+       conda build). When the condition holds it fills the statistics and
+       overlap exactly as `computeAlignmentStats` would; otherwise (ties,
+       mismatches, indels) SeqAn runs as before. `--full-realignment` keeps
+       SeqAn for every pair; `--check-perfect-overlaps` (testing) runs both
+       and stops on a difference. Re-aligned and shortcut counts are in the
+       `-v` output and the shard metadata.
+     - **Checks:** 2.3 M random pairs (repeats, homopolymers, IUPAC,
+       substitutions, indels; 0 differences, also under ASan/UBSan); every
+       shortcut pair of both benchmark sets compared with SeqAn (0
+       differences); a deliberately broken tie test is caught by the unit
+       harness and by `test_tied_overlaps_take_the_seqan_route`.
+     - **Benchmark** (same sets; edges, nodes, merged shards and statistics
+       identical):
+
+       | Set | Shortcut pairs | 24 threads, wall | CPU | 16 shards, max CPU |
+       |---|---:|---:|---:|---:|
+       | mixed | 52.20 M of 52.94 M (98.6%) | 304 → 36 s (8.4×) | 6,637 → 744 s (8.9×) | 484 → 57 s |
+       | skewed | 82.94 M of 85.41 M (97.1%) | 480 → 69 s (6.9×) | 10,657 → 1,504 s (7.1×) | 736 → 113 s |
+
+       The SeqAn alignments left (0.7 M and 2.5 M pairs) are about 4% and 12%
+       of the CPU; the rest is the alignment-pair comparison loop.
+     - Tests: `tests/test_ovgraphbuild_perfect_overlap.py` (32).
 2. Benchmark the slow production filtered SAM with its clustered reference
    (`ovgraphbuild` with `--threads 24`, plus 1 thread on a few
    `--pair-shard-*` slices for the serial rate). Record the read count,

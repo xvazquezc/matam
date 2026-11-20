@@ -15,6 +15,7 @@
 #include "optionsParser.h"
 #include "assemblyStatistics.h"
 #include "seqanObjectsFormating.h"
+#include "perfectOverlap.h"
 
 using TSequence = seqan::String<char>;                 // sequence type
 using TAlign = seqan::Align<TSequence, seqan::ArrayGaps> ;      // align type

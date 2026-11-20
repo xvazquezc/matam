@@ -25,6 +25,8 @@ struct AlphaOptions
     int pairShardIndex;
     int pairShardCount;
     bool allPairs;
+    bool fullRealignment;
+    bool checkPerfectOverlaps;
     bool verbose;
     bool debug;
     bool test;
@@ -36,6 +38,7 @@ struct AlphaOptions
         outputBasename(""), outputASQG(false), outputCSV(false),
         minOverlapLength(0), idRateThreshold(100.0), minNumTrailingMatches(0),
         threads(1), pairShardIndex(0), pairShardCount(1), allPairs(false),
+        fullRealignment(false), checkPerfectOverlaps(false),
         verbose(false), debug(false), test(false),
         noIndel(false)
     {}

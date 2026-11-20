@@ -230,6 +230,8 @@ void mergeCompatibilityStatistics(GlobalStatistics &destination,
     destination.numPotentialOverlaps += source.numPotentialOverlaps;
     destination.numOverlaps += source.numOverlaps;
     destination.enclosedOverlapsNum += source.enclosedOverlapsNum;
+    destination.realignedReadPairsNum += source.realignedReadPairsNum;
+    destination.perfectOverlapShortcutsNum += source.perfectOverlapShortcutsNum;
     destination.compatibleReadPairsNum += source.compatibleReadPairsNum;
     destination.incompatibleReadPairsNum += source.incompatibleReadPairsNum;
     destination.neitherCompatNorIncompatReadPairsNum += source.neitherCompatNorIncompatReadPairsNum;
@@ -593,6 +595,9 @@ void buildCompatibilityGraph(TGraph &graph,
                      << "completed_pair_count\t" << completedPairs << "\n"
                      << "compared_pair_count\t" << comparedPairs << "\n"
                      << "all_pairs\t" << (options.allPairs ? 1 : 0) << "\n"
+                     << "full_realignment\t" << (options.fullRealignment ? 1 : 0) << "\n"
+                     << "realigned_pair_count\t" << globalStats.realignedReadPairsNum << "\n"
+                     << "perfect_overlap_shortcut_count\t" << globalStats.perfectOverlapShortcutsNum << "\n"
                      << "requested_threads\t" << options.threads << "\n"
                      << "thread_limit\t" << MAX_WORKER_THREADS << "\n"
                      << "threads\t" << workerCount << "\n"
@@ -823,15 +828,42 @@ fastExit:
         else if (seqan::hasFlagRC(bamRecordJ) || alignOvDescription.isRead2RC)
             seqan::reverseComplement(readSeqJ);
 
-        // Perform the de-novo alignment of the 2 reads sequences, using the levenstein distance as a score scheme
-        TAlign align;
-        // int score = align2ReadSequences(align, readSeqI, readSeqJ);
-        align2ReadSequences(align, readSeqI, readSeqJ);
-
         alignOvDescription.readIDI = i;
         alignOvDescription.readIDJ = j;
 
-        computeAlignmentStats(alignOvStats, alignOvDescription, align, readSeqI, readSeqJ, false);
+        ++globalStats.realignedReadPairsNum;
+        OverlapDescription const descriptionBefore = alignOvDescription;
+        auto realignWithSeqAn = [&readSeqI, &readSeqJ](OverlapStatistics &stats,
+                                                       OverlapDescription &description)
+        {
+            // Perform the de-novo alignment of the 2 reads sequences, using the levenstein distance as a score scheme
+            TAlign align;
+            align2ReadSequences(align, readSeqI, readSeqJ);
+            computeAlignmentStats(stats, description, align, readSeqI, readSeqJ, false);
+        };
+
+        // Reads overlapping without any difference get the same statistics
+        // without the full alignment (see perfectOverlap.h).
+        if (!options.fullRealignment
+            && computePerfectOverlap(alignOvStats, alignOvDescription, readSeqI, readSeqJ))
+        {
+            ++globalStats.perfectOverlapShortcutsNum;
+            if (options.checkPerfectOverlaps)
+            {
+                OverlapStatistics seqanStats;
+                OverlapDescription seqanDescription = descriptionBefore;
+                realignWithSeqAn(seqanStats, seqanDescription);
+                if (!sameOverlap(alignOvStats, alignOvDescription, seqanStats, seqanDescription))
+                {
+                    throw std::runtime_error("perfect-overlap shortcut differs from the SeqAn alignment for reads "
+                                             + std::to_string(i) + " and " + std::to_string(j));
+                }
+            }
+        }
+        else
+        {
+            realignWithSeqAn(alignOvStats, alignOvDescription);
+        }
 
         auto seqIdentityPercent = static_cast<double>(alignOvStats.matchesNum) / alignOvStats.totalOverlapPositions;
 

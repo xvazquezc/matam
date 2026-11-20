@@ -449,7 +449,9 @@ int main(int argc, char const ** argv)
                   << "INFO:          " << globalStats.incompatibleReadPairsNum
                   << " were found incompatible" << "\n"
                   << "INFO: and      " << globalStats.neitherCompatNorIncompatReadPairsNum
-                  << " were neither compatible nor incompatible"
+                  << " were neither compatible nor incompatible" << "\n"
+                  << "INFO: Re-aligned read pairs: " << globalStats.realignedReadPairsNum
+                  << " (" << globalStats.perfectOverlapShortcutsNum << " perfect overlaps, without the full alignment)"
                   << "\n" << "\n";
     }
 

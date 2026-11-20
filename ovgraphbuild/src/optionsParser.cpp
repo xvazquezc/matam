@@ -43,6 +43,8 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
     seqan::addOption(parser, seqan::ArgParseOption( "", "pair-shard-count", "Number of pair shards.",
         seqan::ArgParseArgument::INTEGER, "COUNT"));
     seqan::addOption(parser, seqan::ArgParseOption( "", "all-pairs", "Compare every read pair. By default only reads aligned to a common reference are compared: the other pairs cannot overlap, and the output and statistics are the same."));
+    seqan::addOption(parser, seqan::ArgParseOption( "", "check-perfect-overlaps", "For testing: also align the perfect overlaps with SeqAn, and stop with an error if a result differs."));
+    seqan::addOption(parser, seqan::ArgParseOption( "", "full-realignment", "Re-align every pair of compatible reads with the full SeqAn alignment. By default the reads that overlap without any difference skip it, as their alignment is known: the output and statistics are the same."));
 
     // Define Options -- Section Misc.
     seqan::addSection(parser, "Misc.");
@@ -94,6 +96,8 @@ parseCommandLine(AlphaOptions &options, int argc, char const **argv)
     seqan::getOptionValue(options.pairShardIndex, parser, "pair-shard-index");
     seqan::getOptionValue(options.pairShardCount, parser, "pair-shard-count");
     options.allPairs = seqan::isSet(parser, "all-pairs");
+    options.fullRealignment = seqan::isSet(parser, "full-realignment");
+    options.checkPerfectOverlaps = seqan::isSet(parser, "check-perfect-overlaps");
     options.noIndel = seqan::isSet(parser, "no_indel");
 
     if (options.pairShardIndex >= options.pairShardCount)
@@ -159,6 +163,7 @@ int printStartingDebugAndVerboseInfo(AlphaOptions &options)
                   << "PARAM: Pair shard:         \t" << options.pairShardIndex
                   << "/" << options.pairShardCount << "\n"
                   << "PARAM: All pairs:          \t" << options.allPairs << "\n"
+                  << "PARAM: Full realignment:   \t" << options.fullRealignment << "\n"
                   << "PARAM: Debug:              \t" << options.debug << "\n"
                   << "PARAM: Verbose:            \t" << options.verbose << "\n"
                   << "PARAM: Test:               \t" << options.test << "\n" << "\n";

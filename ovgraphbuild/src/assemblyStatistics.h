@@ -21,6 +21,8 @@ struct GlobalStatistics
     int64_t numPotentialOverlaps;
     int64_t numOverlaps;
     int64_t enclosedOverlapsNum;
+    int64_t realignedReadPairsNum;
+    int64_t perfectOverlapShortcutsNum;
     int64_t compatibleReadPairsNum;
     int64_t incompatibleReadPairsNum;
     int64_t neitherCompatNorIncompatReadPairsNum;
@@ -35,6 +37,7 @@ struct GlobalStatistics
         unmappedAlignmentsNum(0), numConsideredReadsPairs(0), readPairsWithCommonRefNum(0),
         numConsideredAlignmentsPairs(0), alignmentsPairsWithCommonRefNum(0), numPotentialOverlaps(0),
         numOverlaps(0), enclosedOverlapsNum(0),
+        realignedReadPairsNum(0), perfectOverlapShortcutsNum(0),
         compatibleReadPairsNum(0), incompatibleReadPairsNum(0), neitherCompatNorIncompatReadPairsNum(0),
         truePositive(0), falsePositive(0), trueNegative(0), falseNegative(0)
     {}
