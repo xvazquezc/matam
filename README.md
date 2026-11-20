@@ -86,8 +86,23 @@ supported.
 Paired reads stay in separate R1/R2 files throughout. The read pairs selected by
 the mapping step (pairs with at least one mate matching the database, both mates
 kept) are written to the output directory as `marker_reads_R1.fq.gz` and
-`marker_reads_R2.fq.gz`, with the original read names, in step. With
-`--filter_only`, MATAM stops after this step, so these two files are its output.
+`marker_reads_R2.fq.gz`, with the original read names, in step. Their SortMeRNA
+alignments are written as `marker_alignments.sam.gz`. With `--filter_only`, MATAM
+stops after this step, so these files are its output.
+
+`--read_alignments SAM` skips the read mapping and takes it from SortMeRNA
+alignments made earlier, such as the `marker_alignments.sam.gz` of a run on the same
+or a larger read set. The SAM header must show the same database, `--best` and
+`--evalue`. The pairs with at least one alignment are selected, as by the mapping, so
+a read set can be mapped once and then several subsamples of it assembled without
+mapping each one again.
+
+On a smaller read set, the alignments are slightly different from those a mapping of
+that set would give. SortMeRNA's minimum alignment score rises with the total length
+of the reads mapped together. It also keeps the first `--best` alignments that reach
+that score. So a read near the threshold, or one with more candidate references than
+`--best`, can get different alignments. In a test on 16S reads, 1–3% of the reads of a
+subsample had different alignments after filtering.
 
 ## <a id="input-data"></a>3.1 Input data
 

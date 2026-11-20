@@ -1,4 +1,11 @@
-"""Integration test for reusing one full SortMeRNA mapping across subsamples."""
+"""SortMeRNA contract behind reusing one mapping for several read subsets.
+
+Slicing a mapping of a larger read set gives the alignments that mapping the
+subset alone gives, except near SortMeRNA's minimum alignment score: that score
+grows with the total length of the reads mapped together (E-value), and
+``--num_alignments`` keeps the first alignments that reach it. MATAM's
+``--read_alignments`` relies on the first part and documents the second.
+"""
 
 from collections import Counter
 import gzip
@@ -58,7 +65,7 @@ def mapping_records(path):
 
 
 def map_pairs(reference, index_dir, forward, reverse, output_dir, label,
-              compress_output):
+              compress_output, num_alignments=1, evalue="1e-03"):
     """Run the MATAM read-mapping SortMeRNA contract on one paired input."""
     output_prefix = output_dir / label
     workdir = output_dir / "{}_workdir".format(label)
@@ -71,7 +78,7 @@ def map_pairs(reference, index_dir, forward, reverse, output_dir, label,
         "--paired_in",
         "--aligned", str(output_prefix),
         "--fastx", "--sam", "--blast", "1",
-        "--num_alignments", "1", "-e", "1e-03", "--threads", "1",
+        "--num_alignments", str(num_alignments), "-e", evalue, "--threads", "1",
     ]
     if compress_output:
         command.extend(["--zip-out", "true"])
@@ -89,10 +96,10 @@ def map_pairs(reference, index_dir, forward, reverse, output_dir, label,
 @pytest.mark.parametrize("compress_output", [False, True])
 def test_subsetting_a_full_mapping_matches_mapping_the_selected_pairs(
         tmp_path, compress_output):
-    """Selected SAM/FASTQ records must not depend on when the subset is made.
+    """Away from the score threshold, slicing the full mapping gives the subset's own.
 
-    This is the required invariant before replacing per-percentage SortMeRNA
-    runs with one full mapping followed by pair-level subsetting of its outputs.
+    The reads match the reference exactly, so their scores are far above
+    SortMeRNA's minimum score for either read set.
     """
     random_source = random.Random(17)
     reference_sequence = "".join(random_source.choice("ACGT") for _ in range(1200))
@@ -146,3 +153,43 @@ def test_subsetting_a_full_mapping_matches_mapping_the_selected_pairs(
     )
     assert {canonical_pair_id(record[0]) for record in full_selected_fastq} == selected_pair_ids
     assert full_selected_fastq == Counter(fastq_records(subset_fastq))
+
+
+def test_alignments_near_the_minimum_score_depend_on_the_reads_mapped_together(tmp_path):
+    """The minimum score rises with the reads mapped together, so a weak alignment
+    found when a few reads are mapped alone is lost in a larger read set."""
+    random_source = random.Random(5)
+
+    def random_sequence(length):
+        return "".join(random_source.choice("ACGT") for _ in range(length))
+
+    reference_sequence = random_sequence(1500)
+    reference = tmp_path / "reference.fasta"
+    reference.write_text(">reference\n{}\n".format(reference_sequence))
+    # R1 of probe k starts with k reference bases (score about 2k), the rest is random.
+    probes = [("probe{:02d}".format(k),
+               reference_sequence[100 + 20 * k:100 + 21 * k] + random_sequence(100 - k),
+               random_sequence(100))
+              for k in range(20, 40)]
+    unrelated = [("other{:05d}".format(i), random_sequence(100), random_sequence(100))
+                 for i in range(3000)]
+
+    def aligned_reads_and_minimum_score(label, pairs):
+        forward, reverse = tmp_path / (label + "_R1.fq"), tmp_path / (label + "_R2.fq")
+        write_fastq(forward, [(name + "/1", r1) for name, r1, _ in pairs])
+        write_fastq(reverse, [(name + "/2", r2) for name, _, r2 in pairs])
+        sam_path, _ = map_pairs(reference, tmp_path / "index", forward, reverse, tmp_path,
+                                label, compress_output=False, num_alignments=10, evalue="1e-05")
+        log = (tmp_path / (label + ".log")).read_text()
+        minimum = int(re.search(r"Minimal SW score based on E-value = (\d+)", log).group(1))
+        return set(mapping_records_by_read(sam_path)), minimum
+
+    alone, alone_minimum = aligned_reads_and_minimum_score("alone", probes)
+    together, together_minimum = aligned_reads_and_minimum_score("together", probes + unrelated)
+
+    assert alone_minimum < together_minimum
+    assert together < alone, "a probe aligned alone should be lost among more reads"
+
+
+def mapping_records_by_read(path):
+    return Counter(record.split("\t", 1)[0] for record in mapping_records(path))

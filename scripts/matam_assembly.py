@@ -24,6 +24,7 @@ import pe_tables
 import sortmerna_index
 import matam_version
 import sortmerna_step
+import read_alignments
 from sortmerna_step import find_sortmerna_output
 from assembler_factory import AssemblerFactory
 from fastq_utils import read_fastq_file_handle, validate_paired_fastq, FastqFormatError
@@ -105,6 +106,12 @@ def marker_reads_filepath(out_dir, mate_label, source_filepath):
     """Stable path of the selected R1/R2 marker reads in the output directory."""
     suffix = '.fq.gz' if source_filepath.endswith('.gz') else '.fq'
     return os.path.join(out_dir, 'marker_reads_{}{}'.format(mate_label, suffix))
+
+
+def marker_alignments_filepath(out_dir, source_filepath):
+    """Stable path of the selected reads' alignments in the output directory."""
+    suffix = '.sam.gz' if source_filepath.endswith('.gz') else '.sam'
+    return os.path.join(out_dir, 'marker_alignments' + suffix)
 
 
 def read_tab_file_handle_sorted(tab_file_handle, factor_index):
@@ -334,6 +341,20 @@ def parse_arguments():
                                default = 1e-5,
                                help = 'Max e-value to keep an alignment for. '
                                       'Default is %(default)s')
+    # --read_alignments
+    group_mapping.add_argument('--read_alignments',
+                               action = 'store',
+                               metavar = 'SAM',
+                               type = str,
+                               help = 'Skip the read mapping and use these SortMeRNA alignments '
+                                      '(SAM, optionally gzipped) of the input reads instead, e.g. '
+                                      'the marker_alignments.sam.gz of an earlier run '
+                                      '(--filter_only) on the same or a larger read set, with the '
+                                      'same database, --best and --evalue. Pairs with at least '
+                                      'one alignment are selected, as by the mapping. Alignments '
+                                      'made on a larger read set can differ slightly from mapping '
+                                      'these reads alone: SortMeRNA\'s minimum score grows with '
+                                      'the total length of the reads mapped together')
 
     # Alignment filtering parameters
     group_filt = parser.add_argument_group('Alignment filtering')
@@ -586,6 +607,8 @@ def parse_arguments():
     args.forward = os.path.abspath(args.forward)
     args.reverse = os.path.abspath(args.reverse)
     args.ref_db = os.path.abspath(args.ref_db)
+    if args.read_alignments:
+        args.read_alignments = os.path.abspath(args.read_alignments)
     args.out_dir = os.path.abspath(args.out_dir)
     args.workdir = os.path.abspath(args.workdir)
     if args.true_references:
@@ -640,6 +663,8 @@ def print_intro(args):
     # Read mapping
     cmd_line += '--best {0} '.format(args.best)
     cmd_line += '--evalue {0:.2e} '.format(args.evalue)
+    if args.read_alignments:
+        cmd_line += '--read_alignments {0} '.format(args.read_alignments)
 
     # Alignment filtering
     cmd_line += '--score_threshold {0:.2f} '.format(args.score_threshold)
@@ -727,6 +752,7 @@ def main():
     filter_score_bin = os.path.join(matam_script_dir, 'filter_score_multialign.py')
     compute_lca_bin = os.path.join(matam_script_dir, 'compute_lca_from_tab.py')
     compute_compressed_graph_stats_bin = os.path.join(matam_script_dir, 'compute_compressed_graph_stats.py')
+    read_alignments_bin = os.path.join(matam_script_dir, 'read_alignments.py')
     remove_redundant_bin = os.path.join(matam_script_dir, 'remove_redundant_sequences.py')
     evaluate_assembly_bin = os.path.join(matam_script_dir, 'evaluate_assembly.py')
     get_best_matches_bin = os.path.join(matam_script_dir, 'get_best_matches_from_blast.py')
@@ -856,10 +882,13 @@ def main():
 
     # Unless --no_require_index: check every index this run maps against before
     # any step, so an unindexed database stops the run at once (not after the
-    # read mapping). The read mapping uses the clustered db, scaffolding the complete one.
+    # read mapping). The read mapping uses the clustered db (unless
+    # --read_alignments replaces it), scaffolding the complete one.
     if not args.no_require_index:
-        required_indexes = [('clustered ref db', clustered_ref_db_filepath,
-                             clustered_ref_db_smr_idx_dir)]
+        required_indexes = []
+        if not args.read_alignments:
+            required_indexes.append(('clustered ref db', clustered_ref_db_filepath,
+                                     clustered_ref_db_smr_idx_dir))
         if not args.filter_only and not (
                 args.stop_after and STEPS.index(args.stop_after) < STEPS.index('scaffolding')):
             required_indexes.append(('complete ref db', complete_ref_db_filepath,
@@ -1123,6 +1152,19 @@ def main():
     run_options = ' --threads ' + str(args.cpu) + (' -v' if args.verbose else '')
     mapping_inputs = [args.forward, args.reverse, clustered_ref_db_filepath]
     mapping_outputs = [('_fwd', ('.fq', '.fastq')), ('_rev', ('.fq', '.fastq')), ('', ('.sam',))]
+    prepare_mapping = lambda: sortmerna_index_options(
+        clustered_ref_db_filepath, clustered_ref_db_smr_idx_dir,
+        sortmerna_reads_workdir, 'clustered ref db')
+
+    if args.read_alignments:
+        # The mapping is taken from earlier alignments: the same outputs, with
+        # a completion record of its own (so --resume_from works the same).
+        cmd_line = read_alignments_bin + ' --sam ' + shlex.quote(args.read_alignments)
+        cmd_line += ' -1 ' + shlex.quote(args.forward) + ' -2 ' + shlex.quote(args.reverse)
+        cmd_line += ' --aligned ' + shlex.quote(sortme_output_basepath)
+        run_options = ''
+        mapping_inputs = [args.forward, args.reverse, args.read_alignments]
+        prepare_mapping = None
 
     if run_step:
         logger.info('=== Reads mapping against ref db ===')
@@ -1130,15 +1172,23 @@ def main():
         # Set t0
         t0_wall = time.time()
 
+        if args.read_alignments:
+            logger.info('Using the alignments in {} (--read_alignments)'.format(
+                args.read_alignments))
+            try:
+                read_alignments.check_header(args.read_alignments, clustered_ref_db_filename,
+                                             args.best, args.evalue)
+            except (OSError, read_alignments.ReadAlignmentsError) as error:
+                logger.fatal('Cannot use --read_alignments: {}'.format(error))
+                sys.exit('Unusable --read_alignments')
+
         # Reuses a complete mapping of the same inputs; otherwise clears any
         # partial or outdated SortMeRNA output and run state, then maps.
         (sortme_output_forward_filepath, sortme_output_reverse_filepath,
          sortme_output_sam_filepath) = sortmerna_step.run(
             cmd_line, sortmerna_reads_workdir, sortme_output_basepath,
             mapping_inputs, mapping_outputs, run_options, verbose=args.verbose,
-            prepare=lambda: sortmerna_index_options(
-                clustered_ref_db_filepath, clustered_ref_db_smr_idx_dir,
-                sortmerna_reads_workdir, 'clustered ref db'))
+            prepare=prepare_mapping)
 
         # Output running time
         logger.info('Reads mapping completed in {0:.4f} seconds wall time'.format(time.time() - t0_wall))
@@ -1153,14 +1203,17 @@ def main():
                          'to redo it.', error)
             sys.exit('Incomplete read mapping output')
 
-    # Expose the selected read pairs under stable names (also the output of
-    # --filter_only): <out_dir>/marker_reads_R1.fq[.gz] and _R2.
+    # Expose the selected read pairs and their alignments under stable names
+    # (also the output of --filter_only): <out_dir>/marker_reads_R1.fq[.gz],
+    # _R2, and marker_alignments.sam[.gz] (usable as --read_alignments).
     for mate_label, mate_filepath in (('R1', sortme_output_forward_filepath),
                                       ('R2', sortme_output_reverse_filepath)):
         force_symlink(
             os.path.relpath(mate_filepath, start=args.out_dir),
             marker_reads_filepath(args.out_dir, mate_label, mate_filepath),
         )
+    force_symlink(os.path.relpath(sortme_output_sam_filepath, start=args.out_dir),
+                  marker_alignments_filepath(args.out_dir, sortme_output_sam_filepath))
 
     # Get selected reads number (R1 + R2 mates)
     selected_reads_nb = -1

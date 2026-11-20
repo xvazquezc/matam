@@ -221,6 +221,29 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
    alignments per read, compatible and "neither" fractions, and pairs/s.
 3. Add MarkerMAG-nf scatter/merge orchestration only if a graph is still over
    the walltime at 24 threads after 1 and 2.
+4. **Done (2026-11-20, not committed yet): map once, subsample afterwards.**
+   - `--read_alignments SAM` takes the read mapping from SortMeRNA alignments
+     made earlier. It writes the same files the mapping would
+     (`scripts/read_alignments.py`), plus a completion record so that resuming
+     works.
+     - The SAM's `@PG` line must show the same database, `--best` and `-e`.
+     - The clustered index is not needed.
+   - Every run publishes `marker_alignments.sam.gz`.
+   - MarkerMAG-nf uses this for all its subsamples (see its
+     `docs/matam-performance-plan.md`).
+   - **Not exact.** SortMeRNA's minimum score grows with the total read length
+     mapped together, and `--num_alignments` keeps the first alignments that
+     reach it. Minimum scores were 65, 68 and 72 for 1%, 10% and 100% of the
+     mixed set, and 84 at an emulated raw-read size.
+     - After filtering, 1–3% of a subsample's reads had different alignments.
+     - On the same reads, the filtered SAM and the scaffolds are
+       byte-identical.
+     - On 1–50% subsamples, the assemblies differed less from the
+       per-subsample ones than two MATAM seeds differ from each other.
+       Recovery of the true sequences was unchanged within the seed range.
+   - Tests: `tests/test_read_alignments.py` (14) and a SortMeRNA contract test
+     for the threshold effect. The docstring of the older subsetting test was
+     corrected: its property holds only away from the threshold.
 
 ---
 
