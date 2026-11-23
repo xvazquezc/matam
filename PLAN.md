@@ -248,12 +248,52 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        The SeqAn alignments left (0.7 M and 2.5 M pairs) are about 4% and 12%
        of the CPU; the rest is the alignment-pair comparison loop.
      - Tests: `tests/test_ovgraphbuild_perfect_overlap.py` (32).
-2. Benchmark the slow production filtered SAM with its clustered reference
-   (`ovgraphbuild` with `--threads 24`, plus 1 thread on a few
-   `--pair-shard-*` slices for the serial rate). Record the read count,
-   alignments per read, compatible and "neither" fractions, and pairs/s.
-3. Add MarkerMAG-nf scatter/merge orchestration only if a graph is still over
-   the walltime at 24 threads after 1 and 2.
+2. **Done (2026-11-23): production benchmark.**
+   - **Data:** the MarkerMAG-nf run on Gadi (`ferrari/dnasip`, MATAM 1.6.0,
+     8 CPUs, 24 h walltime) whose 50-100% subsamples timed out. Filtered SAMs
+     and the clustered SILVA 138.2 NR99 reference (422,709 sequences) copied
+     here. Reads are MarkerMAG's `.1`/`.2`-suffixed reads, so no mates are
+     detected (`Mate` column all 0).
+   - **The earlier premise was wrong.** The slow graphs were not 170k reads at
+     40-65× the synthetic cost per pair. They had 0.68-1.97 M reads, and the
+     serial rate was about 2.9 M pairs/s on Gadi, like the synthetic sets.
+   - **Results** (this machine, 16 threads, `nice`; Gadi = 1.6.0 serial):
+
+     | Set | Reads (records) | Pairs | Compared (shared ref) | Edges | Gadi 1.6.0 | Here, 16 threads | Peak RSS |
+     |---|---:|---:|---:|---:|---:|---:|---:|
+     | Heavy 100% | 679,088 (2.88 M) | 230.6 G | 11.1 G (4.8%) | 294.4 M | 79,956 s (22.2 h) | 951 s | 4.1 GB |
+     | Bulk 50% | 984,506 (4.88 M) | 484.6 G | 14.0 G (2.9%) | 353.8 M | 134,380 s (37.3 h) | 1,390 s | 6.2 GB |
+     | Bulk 100% | 1,969,143 (9.75 M) | 1.94 T | 55.8 G (2.9%) | 1.417 G | timed out | 5,878 s (1 h 38 min) | 11.4 GB |
+
+     Heavy and Bulk 50% edges are byte-identical to the 1.6.0 outputs (md5),
+     and so are the nodes once the new `Mate` column is removed.
+   - **Serial rate** (Heavy, 1 thread, 4 shards of 64, mean × 64):
+
+     | Mode | Serial (here) |
+     |---|---:|
+     | `--all-pairs --full-realignment` (≈ 1.6.0) | 47,870 s |
+     | `--full-realignment` (pruning only) | 27,800 s |
+     | default (pruning + shortcut) | 10,370 s (4.6× less than ≈ 1.6.0) |
+
+     The ≈ 1.6.0 mode against the Gadi time gives Gadi `normalbw` ≈ 1.67×
+     slower per core than this machine. The shortcut covers 86.7% of the
+     re-aligned pairs (97-99% on the synthetic sets) and gives 2.7× on real
+     data. What is left: about 25% SeqAn on the other 13%, 75% the comparison
+     loop over the 4.8% of pairs that share a reference.
+   - **Gadi estimates for the graph step** (×1.67, from the serial rates):
+     Heavy 100% 4.8 h serial, Bulk 50% 7.1 h, Bulk 100% about 30 h; with 8
+     CPUs roughly 0.7 h, 1 h and 4-5 h.
+   - **New bottlenecks.**
+     - `componentsearch` (graph compaction, single-threaded): Heavy 100%
+       took 703 s here (20 min on Gadi) and **14.6 GB peak, about 50 bytes
+       per edge**. Bulk 100% (1.417 G edges) would need about 70 GB and over
+       1 h on Gadi. It was not run here (30 GB RAM).
+     - SortMeRNA mapping: 2.3 h (Heavy) and 7.5 h (Bulk 100%) per subsample
+       on Gadi at 8 CPUs. "Map once" (item 4) does this once per sample.
+3. ~~Add MarkerMAG-nf scatter/merge orchestration only if a graph is still
+   over the walltime at 24 threads after 1 and 2.~~ Not needed: the largest
+   production graph (Bulk 100%) is an estimated 4-5 h on 8 Gadi CPUs. The
+   limit is now `componentsearch` memory (see item 2).
 4. **Done (2026-11-20, not committed yet): map once, subsample afterwards.**
    - `--read_alignments SAM` takes the read mapping from SortMeRNA alignments
      made earlier. It writes the same files the mapping would
