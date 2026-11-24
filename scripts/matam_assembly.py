@@ -407,15 +407,17 @@ def parse_arguments():
                              metavar = 'INT',
                              type = int,
                              default = 1,
-                             help = 'Minimum number of read to keep a node. '
+                             help = 'Graph nodes (groups of reads) with at most this '
+                                    'many reads are removed. '
                                     'Default is %(default)s')
     # -E / --min_overlap_edge
     group_gcomp.add_argument('-E', '--min_overlap_edge',
                              action = 'store',
                              metavar = 'INT',
                              type = int,
-                             default = 1,
-                             help = 'Minimum number of overlap to keep an edge. '
+                             default = 0,
+                             help = 'Graph edges with at most this many read overlaps '
+                                    'are removed (0: no edge filter). '
                                     'Default is %(default)s')
     # --seed
     group_gcomp.add_argument('--seed',

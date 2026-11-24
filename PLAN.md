@@ -7,9 +7,10 @@
 
 - Upstream base: `v1.6.2` (`e7cd9b2`)
 - Fork remote: `git@github.com:xvazquezc/matam.git`
-- All the work below is on `origin/master` (2026-11-11). Later changes
-  (paired-end rework, index records, `--stop_after`, `--version`, input
-  validation) are tracked in `TESTING_PLAN.md`.
+- All the work below is on `origin/master` (last checked 2026-11-24,
+  `9fc3aa4`). Changes not listed here (paired-end rework, index records,
+  `--stop_after`, `--version`, input validation) are tracked in
+  `TESTING_PLAN.md`.
 
 ## Completed work (8 commits on top of v1.6.2)
 
@@ -57,7 +58,7 @@ must rebuild both `.smr` indexes.
 
 ---
 
-## `ovgraphbuild` parallelisation and sharding — completed locally (`d371b1d`)
+## `ovgraphbuild` parallelisation and sharding — completed (`d371b1d`)
 
 - Added `--threads`, `--pair-shard-index`, and `--pair-shard-count`.
 - MATAM passes `--cpu` to `ovgraphbuild --threads`.
@@ -151,7 +152,7 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
 
 ## Remaining work
 
-1. **Done (2026-11-12, not committed yet): candidate-pair pruning in
+1. **Done (2026-11-12, `02c8310`): candidate-pair pruning in
    `ovgraphbuild`.**
    - **What it does:** by default each read is compared only with later reads
      that share a reference, found through a reference → reads index built
@@ -212,7 +213,7 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        (interval counting on sorted starts). The same count could prune the
        pairs that share a reference but can't overlap;
      - ~~make the de novo check cheaper~~: done exactly, see below.
-   - **Done (2026-11-20, not committed yet): perfect overlaps skip the full
+   - **Done (2026-11-20, `52ed46c`): perfect overlaps skip the full
      de novo alignment.**
      - **Profile first** (cycle counters on 4 single-thread shards): the
        SeqAn DP of `align2ReadSequences` was 84-88% of the pair-comparison
@@ -294,7 +295,7 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
    over the walltime at 24 threads after 1 and 2.~~ Not needed: the largest
    production graph (Bulk 100%) is an estimated 4-5 h on 8 Gadi CPUs. The
    limit was `componentsearch` memory (see items 2 and 5).
-4. **Done (2026-11-20, not committed yet): map once, subsample afterwards.**
+4. **Done (2026-11-20, `e4260a8`): map once, subsample afterwards.**
    - `--read_alignments SAM` takes the read mapping from SortMeRNA alignments
      made earlier. It writes the same files the mapping would
      (`scripts/read_alignments.py`), plus a completion record so that resuming
@@ -320,7 +321,7 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
 
 ---
 
-5. **Done (2026-11-24, not committed yet): `componentsearch` rewrite, same
+5. **Done (2026-11-24, `9fc3aa4`; fork `4c782dd`): `componentsearch` rewrite, same
    output.**
    - `componentsearch` is the upstream submodule
      (`bonsai-team/ComponentSearch2`, f705924). It held the read graph as
@@ -333,8 +334,8 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      `rand()` sequence and every tie are as upstream.
    - **Same output for the same seed, quirks included.** Upstream passes `-N`,
      not `-E`, to the edge filter, and that filter counts links by read index,
-     not by meta node. Both are kept; whether to fix them is a separate
-     decision, to be judged on assemblies.
+     not by meta node. Both were kept in the rewrite and fixed afterwards
+     (item 6).
    - One behaviour change: an edge to a read missing from the nodes file is an
      error (exit 1) instead of undefined behaviour.
    - **Validation:**
@@ -358,6 +359,76 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
    - The submodule now points to the fork `xvazquezc/ComponentSearch2`
      (`.gitmodules`), where the rewrite goes on top of upstream f705924 and
      the fork's CI workflow (`make`).
+
+6. **Done (2026-11-24, fork `c0a73f3`): the `componentsearch` edge filter.**
+   - **The two bugs.**
+     - `-E` is ignored: the edge filter gets `-N`. At MATAM's defaults
+       (`-N 1 -E 1`) this changes nothing.
+     - The filter counts, for meta node A, how many of A's reads overlap
+       each outside *read*, then removes the meta neighbour whose *meta node
+       number* equals that read number, on A's side only. Removals happen
+       only when the two numberings coincide.
+   - **Measured on the production graphs (2026-11-24)**, Heavy 100% and
+     Bulk 50%, `-N 1 -E 1`, seeds 42 and 1-4, with a scratch build that
+     reports the true weights (read links between two meta nodes) and can
+     run a corrected filter (weights per meta node pair, both sides removed,
+     weight <= threshold). Checked first on 150 random graphs: weights equal
+     to an independent Python count, upstream mode identical to upstream.
+     - **The upstream filter does next to nothing.** Of the 218-424 weak
+       (weight 1) edges per run it removed none. It cut 0-2 strong edges on
+       one side only. At seed 42 the output of both graphs is byte-identical
+       to running with no edge filter.
+     - Weak edges are 3.2-3.6% of the meta edges (Heavy seed 42: 6,875
+       edges; weights 1: 218, 2: 333, 3-5: 723, 6-10: 802, 11-100: 2,429,
+       over 100: 2,370).
+     - **Corrected filter vs upstream, same seed:** 70-135 more components
+       (about +1%). 0.55-0.9% of the reads change component at seed 42
+       (3.5% for Bulk 50% at seed 4), mostly pieces split off large
+       components. Some components merge instead: fewer edges means fewer
+       hubs (about -6%), so splicing cuts less. Adjusted Rand index 0.86-0.999.
+       Run time unchanged (1-1.5 min with 4 runs in parallel).
+     - **The seed matters far more:** between seeds 42 and 1, 11-20% of the
+       reads change component (adjusted Rand index 0.54-0.74 across seeds,
+       with either filter).
+   - **What this means.** Published MATAM results effectively had no edge
+     filter. Fixing the counting is not a return to tested behaviour but a
+     new filter, so the assembly comparison has to show it helps, with
+     several seeds because the seed effect is larger.
+   - **Fix, keeping today's results by default.**
+     - `componentsearch`: the weight of a meta edge is the number of read
+       links between the two meta nodes; edges of weight <= `-E` are removed
+       from both meta nodes (`-E 0`: no edge filter). `-E` is passed to the
+       filter, `-N` only filters meta nodes. Fork README now documents the
+       options and the differences from upstream.
+     - MATAM: `--min_overlap_edge` (`-E`) defaults to 0 instead of 1. Help
+       text of `-N` and `-E` corrected: they remove nodes or edges *at or
+       below* the value; they are not a "minimum to keep".
+     - The componentsearch outputs are named `..._N1_E0` instead of
+       `..._N1_E1`, so a run resumed from an older work directory computes
+       graph compaction again.
+     - MarkerMAG-nf uses MATAM's defaults, so it gets `-E 0`.
+   - **Validation:**
+     - 400 random graphs against the scratch build that was checked against
+       upstream and a Python count: `-E 0` equal to upstream with its edge
+       filter off, `-E T` (T = 1-3) equal to the corrected filter (also 200
+       with ASan/UBSan).
+     - Production graphs, seed 42: `-E 0` byte-identical to the original
+       upstream run (`-N 1 -E 1`) for Heavy 100% and Bulk 50%, `-E 1`
+       byte-identical to the corrected filter measured above.
+   - **Tests:** `tests/test_componentsearch.py` now 20:
+     - digests per (graph, seed, `-N`, `-E`), with `-N 0 -E 0` from the
+       upstream binary;
+     - 6 cases checking `-E` against weights counted in the test from the
+       read → meta node column: the filtered edge count is the number of
+       meta edges of weight > T (a one-sided removal would change it), and
+       every output meta edge has weight > T; `-N` alone removes no edge.
+       All 6 fail on the previous build.
+     - `test_functional_pe.py`: MATAM passes `-N 1 -E 0` by default.
+     - Suite 370 passed.
+   - **Open:** whether `-E 1` gives better assemblies (step 3: 16sp example,
+     then the synthetic sets, several seeds each).
+   - Scripts and outputs: scratchpad `efilter/` (`one.sh`, `analyse.py`,
+     `moved.py`), `cs/exp/` (the scratch build), `cs/diff_efilter.py`.
 
 ## Note on conda-forge vs bioconda AVX-512
 
