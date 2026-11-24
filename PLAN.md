@@ -425,8 +425,22 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        All 6 fail on the previous build.
      - `test_functional_pe.py`: MATAM passes `-N 1 -E 0` by default.
      - Suite 370 passed.
-   - **Open:** whether `-E 1` gives better assemblies (step 3: 16sp example,
-     then the synthetic sets, several seeds each).
+   - **Assemblies, 16sp example (2026-11-24):** all 5,825 pairs, the
+     16-reference mini database of the tests, defaults otherwise, `-E` 0, 1
+     and 2 × seeds 1-20 (60 runs, 10 s each); scored against the 16 true
+     sequences with `evaluate_assembly.py` (final scaffolds and SGA contigs).
+     - The final assembly is byte-identical for `-E` 0, 1 and 2 in all 20
+       seeds: 16 scaffolds, 98.25% reference coverage, 16/16 references
+       >= 95% covered, error rate ~0%.
+     - `-E 1` removes under 1 meta edge per run on average (325 meta edges);
+       it gives 1.5 fewer components and 2.2 fewer contigs on average (fewer
+       hubs, so splicing cuts less); contig coverage and error unchanged.
+     - Not informative: 16 well-separated species and their own sequences as
+       the database leave almost no weak edges (production graphs: 3-4%) and
+       no room to improve.
+   - **Open:** whether `-E 1` helps where weak edges are common: a synthetic
+     community with close relatives and a realistic SILVA database (known
+     truth), or production reads (no truth, proxies only).
    - Scripts and outputs: scratchpad `efilter/` (`one.sh`, `analyse.py`,
      `moved.py`), `cs/exp/` (the scratch build), `cs/diff_efilter.py`.
 
