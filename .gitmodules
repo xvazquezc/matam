@@ -3,4 +3,4 @@
 	url = https://github.com/seqan/seqan.git
 [submodule "componentsearch"]
 	path = componentsearch
-	url = https://github.com/bonsai-team/ComponentSearch2.git
+	url = https://github.com/xvazquezc/ComponentSearch2.git

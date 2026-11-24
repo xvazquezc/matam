@@ -287,13 +287,13 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      - `componentsearch` (graph compaction, single-threaded): Heavy 100%
        took 703 s here (20 min on Gadi) and **14.6 GB peak, about 50 bytes
        per edge**. Bulk 100% (1.417 G edges) would need about 70 GB and over
-       1 h on Gadi. It was not run here (30 GB RAM).
+       1 h on Gadi. Fixed by the rewrite in item 5.
      - SortMeRNA mapping: 2.3 h (Heavy) and 7.5 h (Bulk 100%) per subsample
        on Gadi at 8 CPUs. "Map once" (item 4) does this once per sample.
 3. ~~Add MarkerMAG-nf scatter/merge orchestration only if a graph is still
    over the walltime at 24 threads after 1 and 2.~~ Not needed: the largest
    production graph (Bulk 100%) is an estimated 4-5 h on 8 Gadi CPUs. The
-   limit is now `componentsearch` memory (see item 2).
+   limit was `componentsearch` memory (see items 2 and 5).
 4. **Done (2026-11-20, not committed yet): map once, subsample afterwards.**
    - `--read_alignments SAM` takes the read mapping from SortMeRNA alignments
      made earlier. It writes the same files the mapping would
@@ -319,6 +319,45 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      corrected: its property holds only away from the threshold.
 
 ---
+
+5. **Done (2026-11-24, not committed yet): `componentsearch` rewrite, same
+   output.**
+   - `componentsearch` is the upstream submodule
+     (`bonsai-team/ComponentSearch2`, f705924). It held the read graph as
+     `std::map` adjacency sets and copied it into the meta graph, about 50
+     bytes per edge.
+   - The rewrite keeps the read graph once, as a compressed adjacency array
+     (8 bytes per edge, filled in two passes over the edges file). Meta nodes
+     hold read indices only, and every step changes the meta graph in place.
+     A Fenwick tree picks the k-th remaining read for each BFS start, so the
+     `rand()` sequence and every tie are as upstream.
+   - **Same output for the same seed, quirks included.** Upstream passes `-N`,
+     not `-E`, to the edge filter, and that filter counts links by read index,
+     not by meta node. Both are kept; whether to fix them is a separate
+     decision, to be judged on assemblies.
+   - One behaviour change: an edge to a read missing from the nodes file is an
+     error (exit 1) instead of undefined behaviour.
+   - **Validation:**
+     - 600 random graphs (sparse, trees, stars, interval, dense, duplicates
+       and self-loops; random seeds, `-N`, `-E`, `-o`) against the upstream
+       binary: stdout and the three outputs byte-identical, also with
+       ASan/UBSan.
+     - Production graphs, `-r 42 -N 1 -E 1`: components, meta nodes, meta
+       edges, stdout and stderr byte-identical.
+
+       | Graph | Edges | Upstream | Rewrite |
+       |---|---:|---:|---:|
+       | Heavy 100% | 294.4 M | 9 min 11 s, 14.8 GB | 2 min 4 s, 2.3 GB |
+       | Bulk 50% | 353.8 M | 18 min 8 s, 17.8 GB | 3 min 26 s, 2.8 GB |
+       | Bulk 100% | 1.417 G | not run (~70 GB) | 5 min 26 s, 11.1 GB |
+
+       Bulk 100% gives 1,969,143 reads, 21,041 meta nodes and 13,041 meta
+       edges after filtering.
+   - Tests: `tests/test_componentsearch.py` (15; expected outputs from the
+     upstream binary). Suite 365 passed.
+   - The submodule now points to the fork `xvazquezc/ComponentSearch2`
+     (`.gitmodules`), where the rewrite goes on top of upstream f705924 and
+     the fork's CI workflow (`make`).
 
 ## Note on conda-forge vs bioconda AVX-512
 
