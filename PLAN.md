@@ -502,6 +502,36 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      - Side observation: most SGA contigs are single unmerged reads (median
        150 bp; 27-31 k contigs for 47 sequences, ~63 k for Heavy). The
        final assembly keeps only ≥500 bp, so `-E` is not affected.
+     - **Checked (2026-11-25), synthetic and Heavy `E0.r1` work directories:**
+       not a bug; it is how MATAM's SGA step behaves on 16S.
+       - The short contigs come from the large components. Synthetic: one
+         component holds 54% of the reads (98,886) and gives 22,595 contigs,
+         96% ≤160 bp, longest 369 bp. Its reads are all 5
+         Enterobacteriaceae (16S 97-99% identical) plus a few others. Other
+         large components mix many phyla through the conserved 16S regions.
+         Heavy: the two largest (170 k and 117 k reads) give 24 k contigs,
+         longest 846 bp.
+       - SGA runs without bubble popping (`assemble -b 0`; presumably to
+         keep close sequences apart rather than merge them), so the
+         string graph breaks wherever the sequences of a component differ.
+         On the giant component, `sga filter` drops 67,488 exact duplicates
+         and fm-merge merges 25,308 reads into 23,433 sequences.
+       - Read correction is not the fix. `--read_correction auto` corrects a
+         component only if reads bp / contigs bp > 20, which a component
+         that fails to assemble never reaches: the largest ones estimate
+         4-15× at true coverages of hundreds to thousands, so the 88
+         corrected synthetic components (285 Heavy) are small ones that
+         already assembled. Forcing correction on the 8 largest synthetic
+         components: fewer contigs (giant 22,595 → 17,232) but still none
+         ≥500 bp and no more truth covered.
+       - Coverage is not the fix either: subsampling the giant component to
+         1-30% (about 20-600× per organism), with or without correction,
+         gives at most a 421 bp contig.
+       - The scaffolding step (contigs ordered on their best SILVA hit) is
+         what builds the final sequences from these pieces. The cost is the
+         contig-mapping time (68 s for 27 k contigs on the synthetic set).
+         Bubble popping would give longer contigs but merge close
+         organisms; not pursued.
      - Scaffolding maps the contigs against the complete SILVA 144 index
        (9.5 GB) and peaks at 15.5 GB: an `--max_memory` / memory request
        below that fails with `std::bad_alloc` at the last step.
