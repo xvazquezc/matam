@@ -511,8 +511,8 @@ def test_seed_zero_seeds_the_graph_compaction_and_is_logged(pe_workspace, tmp_pa
     assert code == 0, log[-4000:]
     assert re.search(r'CMD: \S*componentsearch .*-r 0 ', log)
     assert re.search(r'matam_assembly\.py .*--seed 0 ', log)     # the logged command line
-    # Default graph filters: single-read nodes removed, no edge filter.
-    assert re.search(r'CMD: \S*componentsearch .*-N 1 -E 0 ', log)
+    # Default graph filters: single-read nodes and single-link edges removed.
+    assert re.search(r'CMD: \S*componentsearch .*-N 1 -E 1 ', log)
 
 
 def test_input_out_of_step_stops_the_run_before_mapping_without_verbose(pe_workspace, tmp_path):

@@ -400,13 +400,16 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        from both meta nodes (`-E 0`: no edge filter). `-E` is passed to the
        filter, `-N` only filters meta nodes. Fork README now documents the
        options and the differences from upstream.
-     - MATAM: `--min_overlap_edge` (`-E`) defaults to 0 instead of 1. Help
-       text of `-N` and `-E` corrected: they remove nodes or edges *at or
-       below* the value; they are not a "minimum to keep".
-     - The componentsearch outputs are named `..._N1_E0` instead of
-       `..._N1_E1`, so a run resumed from an older work directory computes
-       graph compaction again.
-     - MarkerMAG-nf uses MATAM's defaults, so it gets `-E 0`.
+     - MATAM: `--min_overlap_edge` (`-E`) defaults to 0 instead of 1
+       (superseded 2026-11-25: back to 1, see below). Help text of `-N` and
+       `-E` corrected: they remove nodes or edges *at or below* the value;
+       they are not a "minimum to keep".
+     - The componentsearch outputs were named `..._N1_E0` instead of
+       `..._N1_E1`. With the default back to 1 they are `..._N1_E1` again,
+       the same name as 1.6.x: a run resumed at `contigs_assembly` or later
+       in a 1.6.x work directory uses the old components (resuming at
+       `graph_compaction` recomputes them).
+     - MarkerMAG-nf uses MATAM's defaults, so it got `-E 0` (now `-E 1`).
    - **Validation:**
      - 400 random graphs against the scratch build that was checked against
        upstream and a Python count: `-E 0` equal to upstream with its edge
@@ -480,9 +483,22 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        490 on Heavy. Recovery, coverage and strain separation are unchanged.
        Contiguity drops on the synthetic set, and Heavy has slightly fewer
        ≥99% hits. A small effect, inside the seed-to-seed spread on most
-       measures. MATAM's default stays `-E 0` (upstream results). Using
-       `-E 1` in MarkerMAG-nf, where chimeric 16S can link to the wrong MAG,
-       is an option these results support.
+       measures.
+   - **Default back to `-E 1` (2026-11-25).** `-E 1` is what the authors
+     chose: v0.9.3 (Nov 2016, commit 0953586) lowered the defaults from
+     `-N 2 -E 10` to `-N 1 -E 1`, run by the Java ComponentSearch
+     (ppericard/ComponentSearch e675ad8), whose `filterEdges` removed meta
+     edges of at most `-E` read links from both sides, as the fix does now.
+     ComponentSearch2 replaced it in v1.0.0 (Apr 2017) with the bug from its
+     first filtering commit (97c054b), so v1.0-1.6 ran without an edge filter.
+     With the comparison above favouring `-E 1` slightly, MATAM's default is
+     `-E 1` again.
+     - Results change from 1.6.x: a few chimeric scaffolds fewer, slightly
+       shorter scaffolds on some data. `-E 0` reproduces 1.0-1.6 for the
+       same seed; README (3.3) and the `-E` help say so.
+     - componentsearch outputs are named `..._N1_E1` again.
+     - MarkerMAG-nf uses MATAM's defaults, so it gets `-E 1`.
+     - `test_functional_pe.py` checks the default `-N 1 -E 1`.
      - Side observation: most SGA contigs are single unmerged reads (median
        150 bp; 27-31 k contigs for 47 sequences, ~63 k for Heavy). The
        final assembly keeps only ≥500 bp, so `-E` is not affected.

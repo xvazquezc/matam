@@ -415,10 +415,10 @@ def parse_arguments():
                              action = 'store',
                              metavar = 'INT',
                              type = int,
-                             default = 0,
+                             default = 1,
                              help = 'Graph edges with at most this many read overlaps '
-                                    'are removed (0: no edge filter). '
-                                    'Default is %(default)s')
+                                    'are removed (0: no edge filter, as in MATAM '
+                                    '1.0-1.6). Default is %(default)s')
     # --seed
     group_gcomp.add_argument('--seed',
                              action = 'store',

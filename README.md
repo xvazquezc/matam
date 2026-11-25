@@ -226,6 +226,14 @@ files the next steps read are kept, so the run can be continued later with
 which maps every selected read to the scaffolds. With it, a run that assembles no scaffolds
 ends normally with an empty assembly.
 
+Graph compaction removes meta nodes of at most `-N` reads (default 1) and meta edges of
+at most `-E` read overlaps (`--min_overlap_edge`, default 1). Since MATAM 1.0, the
+edge filter was given `-N` and miscounted the overlaps, so in practice it removed almost
+no edges. It now works as the defaults intended (and as before 1.0), which changes the
+assemblies slightly: a few chimeric scaffolds fewer, slightly shorter scaffolds on some
+data. `-E 0` turns the edge filter off and reproduces the results of MATAM 1.0-1.6 for
+the same `--seed`.
+
 MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
 temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
 FASTQ naming, with or without a `.gz` suffix.
