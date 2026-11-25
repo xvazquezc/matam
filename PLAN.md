@@ -438,11 +438,62 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      - Not informative: 16 well-separated species and their own sequences as
        the database leave almost no weak edges (production graphs: 3-4%) and
        no room to improve.
-   - **Open:** whether `-E 1` helps where weak edges are common: a synthetic
-     community with close relatives and a realistic SILVA database (known
-     truth), or production reads (no truth, proxies only).
+   - **Assemblies, synthetic community and Heavy reads (2026-11-25):**
+     database built from SILVA 144 SSURef NR99 (905,628 sequences) with
+     `matam_db_preprocessing.py` (2 h 24 min, 16 GB). Base run once per
+     dataset up to the overlap graph, then `-E` 0 and 1 × seeds 1-5 from
+     graph compaction. `-E` acts after the BFS, so runs with the same seed
+     share their contraction and are compared seed by seed (E1 − E0).
+     - Synthetic: 47 SILVA 144 sequences: 5 Enterobacteriaceae at
+       1000-3000×, 8 strain pairs at 97-99% identity, 20 others, and 6
+       "novel" ones removed from the database. ART HiSeq 2500 2×150,
+       73,824 pairs; 147,648 reads mapped, 77 M overlap edges. Scored
+       against the 47 true sequences (exonerate via `evaluate_assembly.py`,
+       vsearch best hit, `uchime_ref`).
+     - Heavy: all 478,809 pairs with a mate in the production Heavy 16S
+       reads (extracted on Gadi from the raw Heavy reads); 567,068 reads
+       mapped, 155 M edges. No truth: scored against the clustered SILVA 144
+       (vsearch best hit, `uchime_ref`).
+     - Synthetic, mean of 5 seeds, E0 → E1:
+       - chimeras (`uchime_ref` against the truth): 7.2 → 5.4, fewer in 5/5
+         seeds. A cross-genus chimera (a "known" sequence joined to
+         strain_pair1, ~845 bp) is in every `-E 0` run and in no `-E 1` run,
+         and an Enterobacteriaceae chimera in 3/5.
+       - Scaffold N50 1,189 → 1,039 (4/5 seeds lower). Scaffolds 101 → 103,
+         components 573 → 581.
+       - Unchanged: reference coverage 91.5 → 91.6%, true sequences that
+         are the best ≥99% hit of a scaffold 43.6 → 43.6, references
+         ≥90% covered per group (Enterobacteriaceae 2.4 → 2.6, strain pairs
+         12.8 → 12.8, others 18.8 → 18.6, novel 5 → 5 of 6). `-E 1` does not
+         separate the strain pairs better.
+     - Heavy, mean of 5 seeds, E0 → E1:
+       - chimeras 45.6 → 42.6, fewer in 5/5 seeds.
+       - scaffolds ≥99% identical to SILVA 94.4 → 90.8 (4/5 seeds lower),
+         ≥1,200 bp 74.8 → 72.8.
+       - Unchanged: scaffolds 492 → 492, N50 851 → 849, median best-hit
+         identity 97.6%, components +44 (~0.5%).
+       - For reference, the 1.6.0 production scaffolds: 473, N50 803,
+         52 chimeras, median identity 97.9%. Different input reads and
+         database, so not a like-for-like comparison.
+     - **Conclusion:** `-E 1` removes a few chimeras consistently: 10 of 10
+       seed pairs, about 2 per 100 scaffolds on the synthetic set and 3 per
+       490 on Heavy. Recovery, coverage and strain separation are unchanged.
+       Contiguity drops on the synthetic set, and Heavy has slightly fewer
+       ≥99% hits. A small effect, inside the seed-to-seed spread on most
+       measures. MATAM's default stays `-E 0` (upstream results). Using
+       `-E 1` in MarkerMAG-nf, where chimeric 16S can link to the wrong MAG,
+       is an option these results support.
+     - Side observation: most SGA contigs are single unmerged reads (median
+       150 bp; 27-31 k contigs for 47 sequences, ~63 k for Heavy). The
+       final assembly keeps only ≥500 bp, so `-E` is not affected.
+     - Scaffolding maps the contigs against the complete SILVA 144 index
+       (9.5 GB) and peaks at 15.5 GB: an `--max_memory` / memory request
+       below that fails with `std::bad_alloc` at the last step.
    - Scripts and outputs: scratchpad `efilter/` (`one.sh`, `analyse.py`,
-     `moved.py`), `cs/exp/` (the scratch build), `cs/diff_efilter.py`.
+     `moved.py`), `cs/exp/` (the scratch build), `cs/diff_efilter.py`;
+     2026-11-25: `scripts/` (`silva_dna.py`, `design.py`, `simulate.py`),
+     `synth/`, `db144/`, `heavy_reads/`, `eval/` (`base.sh`, `asm.sh`,
+     `scaff.sh`, `queue.sh`, `score.sh`, `summary.py`).
 
 ## Note on conda-forge vs bioconda AVX-512
 
