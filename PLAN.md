@@ -582,6 +582,45 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      `bench_map.pbs`, `compare_threads.pbs`); results in
      `/scratch/u71/$USER/matam_eval/bench/results/`.
 
+8. **To evaluate: the first shared reference decides a read pair
+   (`ovgraphbuild`).**
+   - `computeReadsPairCompatibility` walks the two reads' alignments
+     (I-major, J-minor) and stops at the first alignment pair on a shared
+     reference: compatible gives an edge, anything else (no overlap on the
+     reference, overlap < `--min_overlap`, identity below the threshold)
+     marks the pair incompatible. Later shared references are never looked
+     at.
+   - Consequences: edges can only be missed, never made wrongly (a
+     compatible verdict means the reads agree with each other over the
+     overlap). A pair that overlaps well on one reference loses its edge when
+     an earlier shared reference is partial, soft-clips one read, or places
+     the indels differently. Edges also depend on the alignment order, so
+     the database, `--best` or map once can move edges with no real change
+     in overlap.
+   - Plan: (1) an option to accept a pair when any shared reference is
+     compatible (the current rule stays the default), so its edges are a
+     superset of today's; (2) count the edges it adds on a production SAM;
+     (3) if not negligible, compare assemblies seed by seed as for `-E`
+     (chimeras, contiguity, recovery). Changes results relative to 1.6, so
+     the default only changes on evidence.
+   - **(1) done (2026-11-26):** `ovgraphbuild --any-shared-ref` keeps looking
+     through the shared references until one is compatible; MATAM passes it
+     with `--any_shared_ref` (off by default) and names the graph `..._any`
+     so a resume never mixes the two rules. Every edge still passes the de
+     novo read-to-read alignment. The default path is unchanged (the 72
+     existing ovgraphbuild tests pass). Shard metadata records
+     `any_shared_ref`. Tests: `tests/test_ovgraphbuild_any_shared_ref.py`
+     (12: a pair that only overlaps on its second shared reference, the
+     order dependence, no compatible reference, random inputs with
+     misplaced first alignments where the option only adds edges and keeps
+     the shared edges' lines and order, threads and shards), plus a CLI and a
+     functional test. Suite 512 passed.
+   - **(2) next:** on Gadi, the Heavy pairs mapped against SILVA 144 (99%)
+     with the fork, graph built with and without the option on the same
+     filtered SAM: edges added, components.
+   - Overlap-position pruning (a speedup of the same loop, see item 1's
+     follow-ups) is left until after the production run on the fork.
+
 ## Note on conda-forge vs bioconda AVX-512
 
 Verified with `objdump -d | grep -c "zmm\|evex"` across environments:

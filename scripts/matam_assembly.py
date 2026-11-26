@@ -337,6 +337,12 @@ def parse_arguments(argv=None):
                            default = 50,
                            help = 'Minimum length of an overlap. '
                                   'Default is %(default)s')
+    # --any_shared_ref
+    group_ovg.add_argument('--any_shared_ref',
+                           action = 'store_true',
+                           help = 'Link two reads when they are compatible on any reference '
+                                  'both are aligned to. By default the first shared reference '
+                                  '(in alignment order) decides, as in MATAM 1.0-1.6')
 
     # Graph compaction & Components identification
     group_gcomp = parser.add_argument_group('Graph compaction & Components identification')
@@ -617,6 +623,8 @@ def print_intro(args):
     # Overlap-graph building
     cmd_line += '--min_identity {0:.2f} '.format(args.min_identity)
     cmd_line += '--min_overlap_length {0} '.format(args.min_overlap_length)
+    if args.any_shared_ref:
+        cmd_line += '--any_shared_ref '
 
     # Graph compaction & Components identification
     cmd_line += '--min_read_node {0} '.format(args.min_read_node)
@@ -899,6 +907,8 @@ def main():
 
     ovgraphbuild_basename = sam_cov_filt_basename + '.ovgb_i' + str(min_identity_int)
     ovgraphbuild_basename += '_o' + str(args.min_overlap_length)
+    if args.any_shared_ref:
+        ovgraphbuild_basename += '_any'
     ovgraphbuild_basepath = os.path.join(workdir, ovgraphbuild_basename)
 
     ovgraphbuild_asqg_filepath = ovgraphbuild_basepath + '.asqg'
@@ -1261,6 +1271,8 @@ def main():
         cmd_line += ' -r ' + clustered_ref_db_filepath
         cmd_line += ' -s ' + sam_cov_filt_filepath
         cmd_line += ' --threads ' + str(args.cpu)
+        if args.any_shared_ref:
+            cmd_line += ' --any-shared-ref'
         if args.verbose:
             cmd_line += ' -v'
         if args.debug:

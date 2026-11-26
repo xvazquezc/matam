@@ -236,6 +236,13 @@ assemblies slightly: a few chimeric scaffolds fewer, slightly shorter scaffolds 
 data. `-E 0` turns the edge filter off and reproduces the results of MATAM 1.0-1.6 for
 the same `--seed`.
 
+Two reads aligned to several shared references are judged on the first one, in
+alignment order: if they don't overlap there (a partial reference, a soft-clipped or
+misplaced hit), they get no edge even if they overlap on another shared reference.
+`--any_shared_ref` links them when any shared reference shows a compatible overlap, which
+can only add edges, each still checked by aligning the two reads to each other. It is off
+by default (as in MATAM 1.0-1.6) while its effect on assemblies is evaluated.
+
 MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
 temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
 FASTQ naming, with or without a `.gz` suffix.

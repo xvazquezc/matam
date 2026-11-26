@@ -596,6 +596,7 @@ void buildCompatibilityGraph(TGraph &graph,
                      << "compared_pair_count\t" << comparedPairs << "\n"
                      << "all_pairs\t" << (options.allPairs ? 1 : 0) << "\n"
                      << "full_realignment\t" << (options.fullRealignment ? 1 : 0) << "\n"
+                     << "any_shared_ref\t" << (options.anySharedRef ? 1 : 0) << "\n"
                      << "realigned_pair_count\t" << globalStats.realignedReadPairsNum << "\n"
                      << "perfect_overlap_shortcut_count\t" << globalStats.perfectOverlapShortcutsNum << "\n"
                      << "requested_threads\t" << options.threads << "\n"
@@ -775,12 +776,25 @@ void computeReadsPairCompatibility(GlobalStatistics &globalStats,
             }
 
             // Exit the nested loop if there is enough information
-            // to decide whether the reads are compatible or not
-            if (areReadsCompatible || areReadsIncompatible)
+            // to decide whether the reads are compatible or not. By default
+            // the first shared reference decides; with --any-shared-ref only
+            // a compatible alignment pair ends the search.
+            if (areReadsCompatible)
+            {
+                areReadsIncompatible = false;
+                goto fastExit;
+            }
+            if (areReadsIncompatible && !options.anySharedRef)
             {
                 goto fastExit;
             }
         }
+    }
+
+    // --any-shared-ref: every shared reference was incompatible
+    if (areReadsIncompatible)
+    {
+        goto fastExit;
     }
 
     // There we never went through the fastExit

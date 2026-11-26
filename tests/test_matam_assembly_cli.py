@@ -78,6 +78,11 @@ def test_range_limits_are_accepted(option, value):
     assert getattr(parse(option, value), option[2:]) == float(value)
 
 
+def test_any_shared_ref_is_off_by_default():
+    assert parse().any_shared_ref is False
+    assert parse('--any_shared_ref').any_shared_ref is True
+
+
 def test_quorum_default_is_the_lowest_accepted_value():
     assert parse().quorum == 0.51
 

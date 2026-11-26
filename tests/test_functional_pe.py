@@ -515,6 +515,25 @@ def test_seed_zero_seeds_the_graph_compaction_and_is_logged(pe_workspace, tmp_pa
     assert re.search(r'CMD: \S*componentsearch .*-N 1 -E 1 ', log)
 
 
+def test_any_shared_ref_reaches_ovgraphbuild_and_names_the_graph(pe_workspace, tmp_path):
+    # A graph built under the other pair rule must never be reused on resume.
+    base, db = pe_workspace
+    forward, reverse = write_pe_reads(base / 'reads_any_ref', 'casava', every=PAIR_SUBSAMPLING, gz=True)
+    out_dir = tmp_path / 'out'
+    code, log = _matam(forward, reverse, db, out_dir, '--any_shared_ref', '--debug',
+                       '--stop_after', 'overlap_graph_building')
+    assert code == 0, log[-4000:]
+    assert re.search(r'CMD: \S*ovgraphbuild .*--any-shared-ref', log)
+    assert re.search(r'matam_assembly\.py .*--any_shared_ref ', log)
+    assert list(out_dir.glob('workdir/*_o50_any.edges.csv'))
+
+    code, log = _matam(forward, reverse, db, tmp_path / 'default', '--debug',
+                       '--stop_after', 'overlap_graph_building')
+    assert code == 0, log[-4000:]
+    assert '--any-shared-ref' not in log
+    assert list((tmp_path / 'default').glob('workdir/*_o50.edges.csv'))
+
+
 def test_input_out_of_step_stops_the_run_before_mapping_without_verbose(pe_workspace, tmp_path):
     # The input was only checked with -v, and R1/R2 order never: MATAM pairs
     # mates by position, so out-of-step files were mis-paired silently.
