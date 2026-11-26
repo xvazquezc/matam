@@ -540,6 +540,46 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      2026-11-25: `scripts/` (`silva_dna.py`, `design.py`, `simulate.py`),
      `synth/`, `db144/`, `heavy_reads/`, `eval/` (`base.sh`, `asm.sh`,
      `scaff.sh`, `queue.sh`, `score.sh`, `summary.py`).
+7. **Done (2026-11-26): SortMeRNA read mapping, thread scaling on Gadi.**
+   - **Setup:** MATAM c013bf5 and MarkerMAG-nf 176f4fb, installed on Gadi
+     as the README describes, in a new `markermag-nf-fork` env (SortMeRNA
+     7.1.0, as `testmatam`). The SILVA 138.2 NR99 DB was re-indexed for
+     SortMeRNA 7 with `--clustered_ref` set to the production 1.6.0
+     clustered set, so only the index format changed
+     (`/g/data/u71/xabi/db/markermag_db/SILVA_138.2_SSURef_NR99_fork`).
+     The build took 1 h 54 min and peaked at 8.6 GB. It ran on one core
+     throughout, so 1-2 CPUs are enough.
+   - **Run:** MATAM_MAP_16S as MarkerMAG-nf runs it
+     (`markermag_matam_filter.py --alignments_only`). Input: the Heavy 16S
+     pairs, 478,809 pairs (957,618 reads). `normal` queue (Cascade Lake
+     8274), 2 runs per thread count on jobfs, plus one each at 8 and 48
+     threads with the run directory on /scratch:
+
+     | Threads | Mapping wall | Speedup vs 8 | CPU efficiency |
+     |---:|---:|---:|---:|
+     | 8 | 365-378 s | 1.0× | 92-94% |
+     | 16 | 200-215 s | 1.8× | 83-86% |
+     | 24 | 143-146 s | 2.6× | 81-83% |
+     | 48 | 83 s | 4.5× | 73% |
+
+     - CPU efficiency = (user + sys) / (wall × threads). CPU time is about
+       2,750-2,900 s at every thread count.
+     - /scratch and jobfs give the same times.
+   - **SortMeRNA 7 makes the mapping time a non-issue.** MATAM 1.6.0
+     (SortMeRNA 2.1) took 2.3-3.5 h to map the same reads at 8 CPUs on
+     `normalbw`. That is about 20× slower even after allowing for the
+     slower Broadwell cores. With map once, each sample is mapped once, in
+     about 6 min at 8 CPUs, so more CPUs for MATAM_MAP_16S / MATAM_FILTER
+     would save minutes, not hours. The raw-read mapping (MATAM_FILTER of
+     whole metagenomes) was not measured.
+   - **The thread count does not change the result.** At 8, 48 and 48
+     threads again (same node), the SAM body is byte-identical: same
+     records in the same order. Only the `@PG` line differs, because it
+     records `--threads` and the run paths. The completion record leaves
+     `--threads` out, and that is safe.
+   - Scripts: scratchpad `bench/` (`install_env.pbs`, `build_db.pbs`,
+     `bench_map.pbs`, `compare_threads.pbs`); results in
+     `/scratch/u71/$USER/matam_eval/bench/results/`.
 
 ## Note on conda-forge vs bioconda AVX-512
 
