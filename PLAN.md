@@ -548,7 +548,8 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      clustered set, so only the index format changed
      (`/g/data/u71/xabi/db/markermag_db/SILVA_138.2_SSURef_NR99_fork`).
      The build took 1 h 54 min and peaked at 8.6 GB. It ran on one core
-     throughout, so 1-2 CPUs are enough.
+     throughout, so 1-2 CPUs are enough. Both READMEs now say this: MATAM
+     §3.2.1, and the MarkerMAG-nf database paragraph with the Gadi figures.
    - **Run:** MATAM_MAP_16S as MarkerMAG-nf runs it
      (`markermag_matam_filter.py --alignments_only`). Input: the Heavy 16S
      pairs, 478,809 pairs (957,618 reads). `normal` queue (Cascade Lake

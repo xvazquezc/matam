@@ -144,7 +144,8 @@ matam_db_preprocessing.py -i SILVA_138.2_SSURef_NR99_tax_silva.fasta -d $DBDIR \
 
 where `$DBDIR` is the directory used to store the database. The database prefix,
 given to `matam_assembly.py -d`, is then `$DBDIR/SILVA_138.2_NR95`. Clustering and
-indexing take a few hours for SILVA NR99 (details below).
+indexing take a few hours for SILVA NR99 (details below). `--cpu` speeds up only the
+clustering; indexing is single-threaded.
 
 ### <a id="custom-database"></a>3.2.2 Custom database
 
