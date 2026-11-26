@@ -136,14 +136,15 @@ longer downloadable). Build one from the SSU Ref NR99 sequences of the current
 [SILVA release](https://www.arb-silva.de/):
 
 ```bash
-wget https://www.arb-silva.de/fileadmin/silva_databases/release_138_2/Exports/SILVA_138.2_SSURef_NR99_tax_silva.fasta.gz
-gunzip SILVA_138.2_SSURef_NR99_tax_silva.fasta.gz
-matam_db_preprocessing.py -i SILVA_138.2_SSURef_NR99_tax_silva.fasta -d $DBDIR \
-    --out_db_name SILVA_138.2_NR95 --cpu 8 --max_memory 10000 -v
+wget https://www.arb-silva.de/fileadmin/silva_databases/release_144/Exports/SILVA_144_SSURef_NR99_tax_silva_trunc.fasta.gz
+gunzip SILVA_144_SSURef_NR99_tax_silva_trunc.fasta.gz
+matam_db_preprocessing.py -i SILVA_144_SSURef_NR99_tax_silva_trunc.fasta -d $DBDIR \
+    --out_db_name SILVA_144_NR95 --cpu 8 --max_memory 10000 -v
 ```
 
 where `$DBDIR` is the directory used to store the database. The database prefix,
-given to `matam_assembly.py -d`, is then `$DBDIR/SILVA_138.2_NR95`. Clustering and
+given to `matam_assembly.py -d`, is then `$DBDIR/SILVA_144_NR95`. SILVA exports RNA
+sequences (U); the preprocessing writes them as DNA (T). Clustering and
 indexing take a few hours for SILVA NR99 (details below). `--cpu` speeds up only the
 clustering; indexing is single-threaded.
 
@@ -240,7 +241,7 @@ temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
 FASTQ naming, with or without a `.gz` suffix.
 
 where `$DBDIR` is the database directory and `prefix` is the common prefix used to name the database files.
-For example, for the database built in [3.2.1](#silva-database), the prefix is SILVA_138.2_NR95.
+For example, for the database built in [3.2.1](#silva-database), the prefix is SILVA_144_NR95.
 
 
 ## <a id="example-with-the-provided-dataset"></a>3.4 Example with the provided dataset
@@ -257,7 +258,7 @@ For example, for the database built in [3.2.1](#silva-database), the prefix is S
 
 3. De-novo assembly and taxonomic assignment:
 
-   `matam_assembly.py -d $DBDIR/SILVA_138.2_NR95 --forward 16sp_R1.fastq --reverse 16sp_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
+   `matam_assembly.py -d $DBDIR/SILVA_144_NR95 --forward 16sp_R1.fastq --reverse 16sp_R2.fastq --cpu 4 --max_memory 10000 -v --perform_taxonomic_assignment`
 
 
 # <a id="samples-comparaison"></a>4. Samples comparaison
