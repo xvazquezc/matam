@@ -4,20 +4,11 @@
 import argparse
 import re
 from collections import defaultdict
+from fasta_utils import format_seq
 
 
 # Compile read bases regular expression
 read_bases_re = re.compile(r'\.|,|>|<|[ACGTNacgtn]|\+[0-9]+[ACGTNacgtn]+|\-[0-9]+[ACGTNacgtn]+|\*|\^.|\$')
-
-
-def format_seq(seq, linereturn=80):
-    """
-    Format an input sequence
-    """
-    buff = list()
-    for i in range(0, len(seq), linereturn):
-        buff.append("{0}\n".format(seq[i:(i + linereturn)]))
-    return ''.join(buff).rstrip()
 
 
 def iter_read_bases(read_bases):

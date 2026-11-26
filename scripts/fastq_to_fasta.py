@@ -36,6 +36,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
 import argparse
+from fasta_utils import format_seq
 
 
 def read_fastq_file_handle(fastq_file_handle):
@@ -70,16 +71,6 @@ def read_fastq_file_handle(fastq_file_handle):
     
     # Close input file
     fastq_file_handle.close()
-
-
-def format_seq(seq, linereturn=80):
-    """
-    Format an input sequence
-    """
-    buff = list()
-    for i in range(0, len(seq), linereturn):
-        buff.append("{0}\n".format(seq[i:(i + linereturn)]))
-    return ''.join(buff).rstrip()
 
 
 if __name__ == '__main__':

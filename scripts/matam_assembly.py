@@ -28,6 +28,7 @@ import read_alignments
 from sortmerna_step import find_sortmerna_output
 from assembler_factory import AssemblerFactory
 from fastq_utils import read_fastq_file_handle, validate_paired_fastq, FastqFormatError
+from fasta_utils import read_fasta_file_handle
 
 
 # Set LC_LANG to C for standard sort behaviour
@@ -114,58 +115,6 @@ def marker_alignments_filepath(out_dir, source_filepath):
     return os.path.join(out_dir, 'marker_alignments' + suffix)
 
 
-def read_tab_file_handle_sorted(tab_file_handle, factor_index):
-    """
-    Parse a tab file (sorted by a column) and return a generator
-    """
-    previous_factor_id = ''
-    factor_tab_list = list()
-    # Reading tab file
-    for line in tab_file_handle:
-        l = line.strip()
-        if l:
-            tab = l.split()
-            current_factor = tab[factor_index]
-            # Yield the previous factor tab list
-            if current_factor != previous_factor_id:
-                if previous_factor_id:
-                    yield factor_tab_list
-                    factor_tab_list = list()
-            factor_tab_list.append(tab)
-            previous_factor_id = current_factor
-    # Yield the last tab list
-    yield factor_tab_list
-    # Close tab file
-    tab_file_handle.close()
-
-
-def read_fasta_file_handle(fasta_file_handle):
-    """
-    Parse a fasta file and return a generator
-    """
-    # Variables initialization
-    header = ''
-    seqlines = list()
-    sequence_nb = 0
-    # Reading input file
-    for line in (l.strip() for l in fasta_file_handle if l.strip()):
-        if line[0] == '>':
-            # Yield the last read header and sequence
-            if sequence_nb:
-                yield (header, ''.join(seqlines))
-                del seqlines[:]
-            # Get header
-            header = line[1:].rstrip()
-            sequence_nb += 1
-        else:
-            # Concatenate sequence
-            seqlines.append(line.strip())
-    # Yield the input file last sequence
-    if header or seqlines:
-        yield (header, ''.join(seqlines))
-    # Close input file
-    fasta_file_handle.close()
-
 class FastaStats():
     """
     """
@@ -208,16 +157,6 @@ def compute_fasta_stats(fasta_filepath):
             fasta_stats.add_sequence(seq)
 
     return fasta_stats
-
-
-def format_seq(seq, linereturn=80):
-    """
-    Format an input sequence
-    """
-    buff = list()
-    for i in range(0, len(seq), linereturn):
-        buff.append("{0}\n".format(seq[i:(i + linereturn)]))
-    return ''.join(buff).rstrip()
 
 
 class DefaultHelpParser(argparse.ArgumentParser):

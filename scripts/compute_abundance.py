@@ -10,7 +10,7 @@ import shutil
 import re
 import shlex
 
-from fasta_clean_name import read_fasta_file_handle, format_seq
+from fasta_utils import read_fasta_file_handle, format_seq
 from sam_mates import iter_separate_pairs, mate_of, open_text, tag_mates
 
 logger = logging.getLogger(__name__)

@@ -7,6 +7,8 @@ import argparse
 import subprocess
 import time
 import logging
+from sam_utils import parse_cigar
+from tab_utils import read_tab_file_handle_sorted
 
 # Create logger
 logger = logging.getLogger(__name__)
@@ -47,7 +49,7 @@ class SamAlignment():
         self.query_length = len(self.query_seq)
 
         # Parse CIGAR
-        self.cigar_tab = self.parse_cigar(self.cigar)
+        self.cigar_tab = parse_cigar(self.cigar)
 
         # Compute subject_end, query_start, query_end
         tmp_cigar_tab = self.cigar_tab[:]
@@ -81,53 +83,6 @@ class SamAlignment():
             elif operation == 'S':
                 self.right_softclip_num += count
                 self.overhang_num += count
-
-    @staticmethod
-    def parse_cigar(cigar):
-        """
-        Parse a CIGAR string and return a list of (operation, count) tuples
-        """
-        cigar_tab = list()
-        count_str = ''
-        for c in cigar:
-            if c.isdigit():
-                count_str += c
-            else:
-                operation = c
-                count = 1
-                if count_str:
-                    count = int(count_str)
-                if cigar_tab and operation == cigar_tab[-1][0]:
-                    cigar_tab[-1] = (operation, cigar_tab[-1][1] + count)
-                else:
-                    cigar_tab.append((operation, count))
-                count_str = ''
-        #
-        return cigar_tab
-
-
-def read_tab_file_handle_sorted(tab_file_handle, factor_index=0):
-    """
-    Parse a tab file (sorted by a column) and return a generator
-    """
-    previous_factor_id = ''
-    factor_tab_list = list()
-    # Reading tab file
-    for tab in (l.split() for l in tab_file_handle if l.strip()):
-        current_factor = tab[factor_index]
-        # Yield the previous factor tab list
-        if current_factor != previous_factor_id:
-            if previous_factor_id:
-                yield factor_tab_list
-                factor_tab_list = list()
-        factor_tab_list.append(tab)
-        previous_factor_id = current_factor
-    # Yield the last tab list (none for an empty file)
-    if factor_tab_list:
-        yield factor_tab_list
-    # Close tab file
-    tab_file_handle.close()
-
 
 def return_compatibility_status(alignment_i, alignment_j):
     """

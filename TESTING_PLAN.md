@@ -893,11 +893,58 @@ out of them; everything else is pinned as it is.
 
 ## Tier 3: structural changes that make testing cheaper
 
-- [ ] **Merge the 19 copies of `read_fasta_file_handle`** (plus repeated
+- [x] **Merge the 19 copies of `read_fasta_file_handle`** (plus repeated
   `format_seq`, `parse_cigar`, `read_tab_file_handle_sorted`) into shared
   helpers (`fasta_utils.py`) and test them once. The copies behave
   differently on edge cases (some yield `('', '')` on empty input;
   `matam_assembly.read_tab_file_handle_sorted` yields `[[]]`).
+  - **Done 2026-11-26.**
+    - **Copies:**
+
+      | Helper | Copies | Variants |
+      |---|---:|---:|
+      | `read_fasta_file_handle` | 19 | 3 |
+      | `format_seq` | 12 | 1 |
+      | `parse_cigar` | 5 | 2 (one didn't merge repeats) |
+      | `read_tab_file_handle_sorted` | 8 | 6 |
+
+    - All replaced by imports from `fasta_utils.py`
+      (`read_fasta_file_handle`, `format_seq`), `tab_utils.py` (new:
+      `read_tab_file_handle_sorted`, `group_rows`, which replaces
+      `sample_sam_by_coverage.tab_list_group_by`) and `sam_utils.py` (new:
+      `parse_cigar`, merging adjacent repeats).
+    - `compute_abundance`, `krona` and `matam_compare_samples` now import from
+      `fasta_utils` instead of `fasta_clean_name`.
+    - 876 lines removed from 27 scripts.
+    - Unused copies were dropped: `read_tab_file_handle_sorted` and
+      `format_seq` in `matam_assembly.py`, and `read_fasta_file_handle` in
+      `compute_lca_from_tab.py`.
+    - `compute_lca_from_tab.read_tab_file_handle_sorted` stays: it is a
+      different function (groups by factor, then by read).
+  - **Behaviour chosen:**
+    - Empty input yields nothing.
+    - FASTA lines are stripped and blank lines skipped.
+    - Sequence text before the first header raises `ValueError`. All copies
+      used to prepend it silently to the first record, or return it under an
+      empty header.
+    - Handles are closed as before; any iterable of lines works for tables.
+  - **Bugs this fixes (empty inputs):**
+    - On an empty FASTA, `fasta_length_filter.py`, `replace_Ns_by_As.py` and
+      `remove_redundant_sequences.py` wrote a nameless `>` record.
+      `fasta_clean_name.py`, `compute_abundance`'s reader and every
+      `header.split()[0]` caller crashed (`IndexError`).
+      `remove_redundant_sequences.py` also crashed on `sequences_list[-1]`
+      once the reader was fixed; now it keeps the longest sequence only when
+      there is one.
+    - On an empty blast table (no contig hit), `get_best_matches_from_blast.py`
+      and `generate_scaffolding_blast.py` failed on `tab_list[0]`.
+    - Also: `compute_pairwise_distance_matrix.py` used `sys` without
+      importing it (unused script).
+  - **Tests:** `tests/test_shared_parsers.py` (32): the parsers' edge cases;
+    no script left with its own copy (AST check); the pipeline FASTA and
+    table scripts on empty input (6 fail on the old scripts). The per-script CIGAR
+    tests in `test_input_parsers.py` became one check that every script uses
+    `sam_utils.parse_cigar`. Suite 498 passed.
 - [x] **Extract FASTQ input validation into a function**: the line count
   being a multiple of 4, matching read counts in the pair, and the Phred+33
   check run only with `--verbose` in `matam_assembly.main`. Moving them into
@@ -987,3 +1034,4 @@ out of them; everything else is pinned as it is.
 | 2026-11-25 | — | Short SGA contigs checked (PLAN.md item 6, side observation) on the synthetic and Heavy work directories: not a bug. The read-length contigs come from large components that mix near-identical 16S (synthetic giant component: all 5 Enterobacteriaceae, 98,886 reads → 22,595 contigs, longest 369 bp) or conserved regions of many phyla; SGA runs without bubble popping, so the graph breaks wherever they differ. `--read_correction auto` never corrects such components (reads/contig bp 4-15×, threshold 20); forcing correction on the 8 largest, or subsampling the giant one to 1-30%, still gives no contig ≥500 bp. Scaffolding on SILVA builds the final sequences from them |
 | 2026-11-26 | Tier 2 | All 8 characterization items done: 5 new test files and +3 abundance tests (102 tests). Fixed: `compute_contigs_compatibility.py` crash on an empty SAM; `nucleotidic_number` on `.gz` names. Changed: `--quorum` below 0.51 rejected (as its help says; at 0.5 tied siblings depend on input order); `parse_arguments(argv=None)`. Pinned: 1-base overlap = no overlap, unreachable N-padding in `scaffold_contigs.py`. Suite 474 passed |
 | 2026-11-26 | — | SortMeRNA 7 thread scaling on Gadi (PLAN.md item 7), Heavy 16S pairs, MATAM_MAP_16S: 8 threads 365-378 s (92-94% CPU efficiency), 16 200-215 s, 24 143-146 s, 48 83 s (73%); 1.6.0 took 2.3-3.5 h at 8. SAM byte-identical at 8 and 48 threads |
+| 2026-11-26 | Tier 3 | Shared parsers: the local copies of 4 helpers replaced by `fasta_utils`, `tab_utils`, `sam_utils` (876 lines removed from 27 scripts). Empty input now yields nothing everywhere; fixes nameless `>` records and `IndexError`s on empty FASTA/blast inputs in 7 pipeline scripts; text before the first FASTA header is an error. `test_shared_parsers.py` (32). Suite 498 passed |

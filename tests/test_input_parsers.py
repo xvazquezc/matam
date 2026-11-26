@@ -211,35 +211,16 @@ def test_is_same_pair(id1, id2, same):
 
 # --- CIGAR parsing (#4) -------------------------------------------------------
 
-def _parse_cigar_functions():
+def test_every_script_uses_the_shared_cigar_parser():
     sys.path.insert(0, str(SCRIPTS_DIR))
     try:
-        modules = {name: importlib.import_module(name) for name in (
-            'compute_contigs_compatibility', 'filter_sam_by_pid', 'sample_sam_by_coverage',
-            'compute_ref_coverage_histogram', 'compute_assembly_stats')}
+        sam_utils = importlib.import_module('sam_utils')
+        for name in ('compute_contigs_compatibility', 'filter_sam_by_pid', 'sample_sam_by_coverage',
+                     'compute_ref_coverage_histogram', 'compute_assembly_stats'):
+            assert importlib.import_module(name).parse_cigar is sam_utils.parse_cigar, name
     finally:
         sys.path.pop(0)
-    functions = {name: module.parse_cigar for name, module in modules.items()
-                 if hasattr(module, 'parse_cigar')}
-    functions['compute_contigs_compatibility'] = (
-        modules['compute_contigs_compatibility'].SamAlignment.parse_cigar)
-    return functions
-
-
-PARSE_CIGAR = _parse_cigar_functions()
-MERGING = [name for name in PARSE_CIGAR if name != 'compute_assembly_stats']
-
-
-@pytest.mark.parametrize('name', sorted(PARSE_CIGAR))
-def test_parse_cigar_reads_operations_and_counts(name):
-    assert PARSE_CIGAR[name]('5S10M2I3M1D4M') == [
-        ('S', 5), ('M', 10), ('I', 2), ('M', 3), ('D', 1), ('M', 4)]
-
-
-@pytest.mark.parametrize('name', sorted(MERGING))
-def test_parse_cigar_merges_adjacent_repeated_operations(name):
-    # Used to raise TypeError ('tuple' object does not support item assignment)
-    assert PARSE_CIGAR[name]('5M5M2D1D3M') == [('M', 10), ('D', 3), ('M', 3)]
+    # Cases: tests/test_shared_parsers.py
 
 
 # --- mpileup read bases (#5) --------------------------------------------------

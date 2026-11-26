@@ -5,86 +5,9 @@ import re
 import random
 import argparse
 import numpy as np
-
-
-def tab_list_group_by(tab_list, factor_index=0):
-    """
-    Read a sorted tab list and group by the given colum index
-    """
-    previous_factor_id = ''
-    factor_tab_list = list()
-    # Reading tab file
-    for tab in tab_list:
-        current_factor = tab[factor_index]
-        # Yield the previous factor tab list
-        if current_factor != previous_factor_id:
-            if previous_factor_id:
-                yield factor_tab_list
-                factor_tab_list = list()
-        factor_tab_list.append(tab)
-        previous_factor_id = current_factor
-    # Yield the last tab list
-    yield factor_tab_list
-
-
-def read_tab_file_handle_sorted(tab_file_handle, factor_index=0):
-    """
-    Parse a tab file (sorted by a column) and return a generator
-    """
-    for factor_tab_list in tab_list_group_by((l.split() for l in tab_file_handle if l.strip()), factor_index):
-        yield factor_tab_list
-    # Close tab file
-    tab_file_handle.close()
-
-
-def read_fasta_file_handle(fasta_file_handle):
-    """
-    Parse a fasta file and return a generator
-    """
-    # Variables initialization
-    header = ''
-    seqlines = list()
-    sequence_nb = 0
-    # Reading input file
-    for line in fasta_file_handle:
-        if line[0] == '>':
-            # Yield the last read header and sequence
-            if sequence_nb:
-                yield (header, ''.join(seqlines))
-                del seqlines[:]
-            # Get header
-            header = line[1:].rstrip()
-            sequence_nb += 1
-        else:
-            # Concatenate sequence
-            seqlines.append(line.strip())
-    # Yield the input file last sequence
-    yield (header, ''.join(seqlines))
-    # Close input file
-    fasta_file_handle.close()
-
-
-def parse_cigar(cigar):
-    """
-    Parse a CIGAR string and return a list of (operation, count) tuples
-    """
-    cigar_tab = list()
-    count_str = ''
-    for c in cigar:
-        if c.isdigit():
-            count_str += c
-        else:
-            operation = c
-            count = 1
-            if count_str:
-                count = int(count_str)
-            if cigar_tab and operation == cigar_tab[-1][0]:
-                cigar_tab[-1] = (operation, cigar_tab[-1][1] + count)
-            else:
-                cigar_tab.append((operation, count))
-            count_str = ''
-    #
-    return cigar_tab
+from fasta_utils import read_fasta_file_handle
+from sam_utils import parse_cigar
+from tab_utils import group_rows, read_tab_file_handle_sorted
 
 
 def get_alignment_length_on_ref(cigar):
@@ -126,7 +49,7 @@ def sample_by_depth(sam_handler, fasta_ref_handler, threshold, sampled_out_sam_h
         # Compute ref coverage list
         ref_coverage_list = compute_ref_coverage(ref_sam_tab_list, ref_length)
         #
-        for pos_sam_tab_list in tab_list_group_by(ref_sam_tab_list, 3):
+        for pos_sam_tab_list in group_rows(ref_sam_tab_list, 3):
             starting_pos = int(pos_sam_tab_list[0][3]) - 1 #SAM positions are 1-based
             ref_coverage = ref_coverage_list[starting_pos]
             if ref_coverage <= threshold:

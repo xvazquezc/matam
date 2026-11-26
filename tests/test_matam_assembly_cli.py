@@ -13,6 +13,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 matam_assembly = importlib.import_module('matam_assembly')
 sortmerna_step = importlib.import_module('sortmerna_step')
 assembler_factory = importlib.import_module('assembler_factory')
+fasta_utils = importlib.import_module('fasta_utils')
 sys.path.pop(0)
 
 REQUIRED = ['--forward', 'r1.fq', '--reverse', 'r2.fq', '-d', 'db/silva']
@@ -123,7 +124,7 @@ def test_fastq_line_count(tmp_path, name):
     ('A' * 81, 'A' * 80 + '\nA'),
 ])
 def test_format_seq_wraps_at_80(seq, expected):
-    assert matam_assembly.format_seq(seq) == expected
+    assert fasta_utils.format_seq(seq) == expected
 
 
 def test_both_plain_and_gzipped_sortmerna_outputs_are_ambiguous(tmp_path):

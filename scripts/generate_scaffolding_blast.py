@@ -3,31 +3,7 @@
 
 import argparse
 from collections import defaultdict
-
-
-def read_tab_file_handle_sorted(tab_file_handle, factor_index=0):
-    """
-    Parse a tab file (sorted by a column) and return a generator
-    """
-    previous_factor_id = ''
-    factor_tab_list = list()
-    # Reading tab file
-    for line in tab_file_handle:
-        l = line.strip()
-        if l:
-            tab = l.split()
-            current_factor = tab[factor_index]
-            # Yield the previous factor tab list
-            if current_factor != previous_factor_id:
-                if previous_factor_id:
-                    yield factor_tab_list
-                    factor_tab_list = list()
-            factor_tab_list.append(tab)
-            previous_factor_id = current_factor
-    # Yield the last tab list
-    yield factor_tab_list
-    # Close tab file
-    tab_file_handle.close()
+from tab_utils import read_tab_file_handle_sorted
 
 
 if __name__ == '__main__':

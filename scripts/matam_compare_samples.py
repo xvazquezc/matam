@@ -10,7 +10,7 @@ import collections
 import operator
 import itertools
 
-from fasta_clean_name import read_fasta_file_handle
+from fasta_utils import read_fasta_file_handle
 from compute_abundance import get_abundance_from_fasta
 
 from rdp import read_rpd_file
