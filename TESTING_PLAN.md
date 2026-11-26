@@ -822,33 +822,72 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 
 ## Tier 2: characterization tests (no bugs found, high impact on results)
 
-- [ ] **`compute_contigs_compatibility`** (`--contigs_binning`):
-  `return_compatibility_status` overlap boundaries, the early exit in
-  `compute_contigs_compatibility_matrix`, the secondary-incompatibility rule
-  in `compute_bin_list`, and an empty input. Edge case to decide on: a
-  1-base overlap is reported as "no overlap" (inclusive end coordinate).
-- [ ] **`compute_lca`**: strict LCA (`min_proportion=1.0`) vs `--quorum`
-  mode, tie-breaking, and the `Root` fallback.
-- [ ] **`scaffold_contigs.find_called_base`**: majority base, `*` deletions,
-  insertion threshold (≥ coverage/2), and ties (settled alphabetically, so
-  `T` beats `A`).
-- [ ] **Abundance round-trip**: `complete_fasta_with_abundance` →
-  `get_abundance_from_fasta`; a missing ID becomes 0.
-- [ ] **`components_assembly.assemble_component`** with a fake assembler
-  (monkeypatch `AssemblerFactory.get`): re-runs with read correction only
-  when coverage exceeds the threshold, returns None on empty output, and
-  turns `SystemExit` into `Exception`. Also `estimate_coverage` /
-  `nucleotidic_number` on `.gz` input and zero-length contigs.
-- [ ] **`matam_assembly` helpers**: `FastaStats` on empty input (returns -1),
-  `fastq_line_count` on `.gz`, the ambiguous-match case in
-  `find_sortmerna_output`, and `format_seq`.
-- [ ] **`matam_assembly.parse_arguments`**: range checks, `--debug` turning
-  on verbose and keep-tmp, the coverage threshold being cleared when read
-  correction isn't `auto`, and `--workdir` defaulting to `--out_dir`. Needs
-  `parse_arguments(argv=None)` or monkeypatching `sys.argv`. Also fix the
-  quorum error message (says `[0.51,1]`, checks `[0,1]`).
-- [ ] **`AssemblerFactory.get`** with an unknown name (`KeyError`), and SGA
-  `build_command_line` flags for each `read_correction` mode.
+All done 2026-11-26 (102 tests; suite 474 passed). Four code changes came
+out of them; everything else is pinned as it is.
+
+- [x] **`compute_contigs_compatibility`** (`--contigs_binning`):
+  `tests/test_contigs_compatibility.py` (18). Covers the overlap boundaries
+  (identical, mismatch inside/outside the overlap, contained, 2-base), the
+  early exit, the secondary-incompatibility rule, and the script output
+  (one reference kept whole, split into `_0`/`_1` bins).
+  - **Fixed:** an empty SAM (no contig aligned) raised `IndexError`, because
+    the grouping reader yielded one empty group. It now writes only the header.
+  - **Pinned, not changed:** a 1-base overlap counts as "no overlap"
+    (inclusive end coordinate). A 1-base contig inside another therefore ends
+    the early-exit scan, and later overlaps with the outer contig are not
+    recorded. Irrelevant at MATAM contig lengths.
+- [x] **`compute_lca`**: `tests/test_compute_lca.py` (10). Covers the strict
+  LCA as a common prefix over all alignments, the quorum deepest-taxon rule,
+  per-read weight sharing, and the `Root` fallback in both modes. At a quorum
+  of 0.5, two tied siblings are decided by input order (the last one wins).
+  That is why `--quorum` must be at least 0.51.
+- [x] **`scaffold_contigs.find_called_base`**: `tests/test_scaffold_contigs.py` (17).
+  Covers tokenising, majority, case, start/end markers, `*` deletions, the
+  insertion threshold (≥ coverage/2, using the coverage column rather than
+  the token count), and ties (the last alphabetically wins: `T` over `A`,
+  a base over a tied `*`).
+  - Checked: `samtools mpileup` without `-f` (how MATAM runs it) prints read
+    bases as letters, so ignoring `.`/`,` changes nothing.
+  - Pinned: `max_N_string_length = 1`, so any uncovered position starts a
+    new scaffold. The N-padding branch, which would add one N too many,
+    can't be reached.
+- [x] **Abundance round-trip** (in `tests/test_compute_abundance.py`, +3):
+  integer and fractional counts survive, a missing ID is written as 0 with a
+  warning, and a header without `count=` stops the run.
+- [x] **`components_assembly.assemble_component`**: `tests/test_components_assembly.py` (16),
+  with a fake assembler.
+  - Assembly re-runs with correction only in `auto` mode and only when
+    coverage > threshold (equal is not enough).
+  - The `coverage_threshold` warning appears in the other modes.
+  - An empty first or corrected assembly gives None.
+  - Zero-length contigs are kept without a re-run.
+  - `SystemExit` is turned into `Exception`.
+  - **Fixed:** `nucleotidic_number` rejected `.gz` names
+    (`r.fq.gz` matched neither FASTA nor FASTQ) although it opens gzip.
+    Not reachable in MATAM (components and contigs are written uncompressed).
+- [x] **`matam_assembly` helpers** (in `tests/test_matam_assembly_cli.py`):
+  - `FastaStats` on empty input gives -1.
+  - `fastq_line_count` handles plain and `.gz` input.
+  - `format_seq` wraps at 80.
+  - `find_sortmerna_output` treats plain + `.gz`, or `.fq` + `.fastq`, as
+    ambiguous, and lists the names it looked for when the output is missing.
+- [x] **`matam_assembly.parse_arguments`** (same file):
+  - Range limits, both accepted and rejected.
+  - `--debug` turns on verbose and keep-tmp.
+  - The coverage threshold is cleared unless read correction is `auto`.
+  - `--workdir` defaults to `--out_dir`, and paths become absolute.
+  - **Changed:**
+    - `parse_arguments(argv=None)` takes an argument list.
+    - **Quorum check aligned with the help text:** values below 0.51 are now
+      rejected. The check used to accept [0,1] while the error message and
+      `--quorum` help both said 0.51-1; see `compute_lca` above for why 0.51
+      is the minimum.
+  - The source-grepping CLI test in `test_sortmerna_paired_contract.py` now
+    parses arguments instead.
+- [x] **`AssemblerFactory.get`** (same file): an unknown name gives a
+  `KeyError` listing `SGA`. The SGA command line has `--no_correction` in
+  `no`/`auto` mode but not in `yes`. `run()` before `build_command_line()`
+  stops.
 
 ---
 
@@ -946,3 +985,5 @@ Before the change it failed: 1,457 vs 2,914 nodes.
 | 2026-11-25 | — | `-E` assembly comparison, harder sets (PLAN.md item 6). SILVA 144 NR99 database. Synthetic: 47 sequences (5 Enterobacteriaceae at 1000-3000×, 8 strain pairs at 97-99%, 6 held out of the database), ART 2×150, 73,824 pairs. Heavy: 478,809 production pairs. `-E` 0/1 × seeds 1-5, compared seed by seed. `-E 1` gives fewer chimeras in 10/10 seed pairs: synthetic 7.2 → 5.4 (against the truth; a cross-genus chimera in every `-E 0` run is gone), Heavy 45.6 → 42.6 (`uchime_ref` against SILVA). Coverage, recovery and strain separation unchanged. Synthetic N50 1,189 → 1,039; Heavy ≥99% hits 94.4 → 90.8. Small effect; MATAM default stays `-E 0`. Scaffolding against the complete SILVA 144 needs 15.5 GB |
 | 2026-11-25 | — | MATAM `--min_overlap_edge` (`-E`) default 0 → 1 (PLAN.md item 6): the authors' choice since v0.9.3 (Nov 2016), applied by the Java ComponentSearch until v1.0.0 switched to ComponentSearch2 and its bug. Results change from 1.6.x (fewer chimeras, see the comparison above); `-E 0` reproduces 1.0-1.6. README 3.3 and `-E` help updated. `test_functional_pe.py` checks the default `-N 1 -E 1` |
 | 2026-11-25 | — | Short SGA contigs checked (PLAN.md item 6, side observation) on the synthetic and Heavy work directories: not a bug. The read-length contigs come from large components that mix near-identical 16S (synthetic giant component: all 5 Enterobacteriaceae, 98,886 reads → 22,595 contigs, longest 369 bp) or conserved regions of many phyla; SGA runs without bubble popping, so the graph breaks wherever they differ. `--read_correction auto` never corrects such components (reads/contig bp 4-15×, threshold 20); forcing correction on the 8 largest, or subsampling the giant one to 1-30%, still gives no contig ≥500 bp. Scaffolding on SILVA builds the final sequences from them |
+| 2026-11-26 | Tier 2 | All 8 characterization items done: 5 new test files and +3 abundance tests (102 tests). Fixed: `compute_contigs_compatibility.py` crash on an empty SAM; `nucleotidic_number` on `.gz` names. Changed: `--quorum` below 0.51 rejected (as its help says; at 0.5 tied siblings depend on input order); `parse_arguments(argv=None)`. Pinned: 1-base overlap = no overlap, unreachable N-padding in `scaffold_contigs.py`. Suite 474 passed |
+| 2026-11-26 | — | SortMeRNA 7 thread scaling on Gadi (PLAN.md item 7), Heavy 16S pairs, MATAM_MAP_16S: 8 threads 365-378 s (92-94% CPU efficiency), 16 200-215 s, 24 143-146 s, 48 83 s (73%); 1.6.0 took 2.3-3.5 h at 8. SAM byte-identical at 8 and 48 threads |

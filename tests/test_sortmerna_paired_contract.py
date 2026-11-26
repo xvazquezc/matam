@@ -2,6 +2,8 @@ from pathlib import Path
 import importlib
 import sys
 
+import pytest
+
 
 SCRIPTS_DIR = Path(__file__).parent.parent / 'scripts'
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -28,15 +30,16 @@ def test_selected_pairs_are_published_under_stable_names(tmp_path):
         str(tmp_path), 'R2', '/x/aligned_rev.fq') == str(tmp_path / 'marker_reads_R2.fq')
 
 
-def test_public_cli_requires_separate_paired_input_files():
-    source = (Path(__file__).parent.parent / 'scripts' / 'matam_assembly.py').read_text()
-    parser_source = source.split('def parse_arguments():', 1)[1].split(
-        'def print_intro(args):', 1)[0]
-
-    assert "group_main.add_argument('-i', '--input_fastq'" not in parser_source
-    assert "'--forward'" in parser_source
-    assert "'--reverse'" in parser_source
-    assert parser_source.count('required = True') >= 2
+@pytest.mark.parametrize('argv', [
+    ['--forward', 'r1.fq', '-d', 'db'],                       # no --reverse
+    ['--reverse', 'r2.fq', '-d', 'db'],                       # no --forward
+    ['-i', 'reads.fq', '--forward', 'r1.fq', '--reverse', 'r2.fq', '-d', 'db'],  # no interleaved input
+])
+def test_public_cli_requires_separate_paired_input_files(argv, capsys):
+    with pytest.raises(SystemExit):
+        matam_assembly.parse_arguments(argv)
+    args = matam_assembly.parse_arguments(['--forward', 'r1.fq', '--reverse', 'r2.fq', '-d', 'db'])
+    assert args.forward.endswith('r1.fq') and args.reverse.endswith('r2.fq')
 
 
 def test_sortmerna_output_discovery_accepts_fq_fastq_and_gzip(tmp_path):

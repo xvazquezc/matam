@@ -231,9 +231,9 @@ class DefaultHelpParser(argparse.ArgumentParser):
         sys.exit(2)
 
 
-def parse_arguments():
+def parse_arguments(argv=None):
     """
-    Parse the command line, and check if arguments are correct
+    Parse the command line (argv, default sys.argv[1:]), and check if arguments are correct
     """
     # Initiate argument parser
     parser = DefaultHelpParser(description='MATAM assembly',
@@ -561,7 +561,7 @@ def parse_arguments():
                                    'Relevant options for this step correspond to the "Read mapping" section.')
 
     #
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Arguments checking
     if args.score_threshold < 0 or args.score_threshold > 1:
@@ -572,7 +572,8 @@ def parse_arguments():
         parser.print_help()
         raise Exception("min identity not in range [0,1]")
 
-    if args.quorum < 0 or args.quorum > 1:
+    # Below 0.51, two sibling taxa can both reach the quorum.
+    if args.quorum < 0.51 or args.quorum > 1:
         parser.print_help()
         raise Exception("quorum not in range [0.51,1]")
 

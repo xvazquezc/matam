@@ -122,8 +122,9 @@ def read_tab_file_handle_sorted(tab_file_handle, factor_index=0):
                 factor_tab_list = list()
         factor_tab_list.append(tab)
         previous_factor_id = current_factor
-    # Yield the last tab list
-    yield factor_tab_list
+    # Yield the last tab list (none for an empty file)
+    if factor_tab_list:
+        yield factor_tab_list
     # Close tab file
     tab_file_handle.close()
 

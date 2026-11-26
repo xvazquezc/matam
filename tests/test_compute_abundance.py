@@ -72,3 +72,35 @@ def test_each_mate_counts_as_one_read():
 
     assert dict(abundance) == {'s1': 1.5, 's2': 2.5}
     assert sum(abundance.values()) == 4  # four mates
+
+
+from compute_abundance import complete_fasta_with_abundance, get_abundance_from_fasta
+
+
+def test_abundance_round_trip_through_the_fasta_headers(tmp_path):
+    scaffolds = tmp_path / 'scaffolds.fa'
+    scaffolds.write_text('>1 lca=Bacteria;X\n' + 'A' * 100 + '\n>2\nCCGG\n>3\nTT\n')
+    out = tmp_path / 'scaffolds_abundance.fa'
+
+    complete_fasta_with_abundance(str(scaffolds), str(out), {'1': 2.5, '2': 7, '3': 1 / 3})
+
+    assert out.read_text().splitlines()[:3] == ['>1 lca=Bacteria;X count=2.5', 'A' * 80, 'A' * 20]
+    assert get_abundance_from_fasta(str(out)) == {'1': 2.5, '2': 7.0, '3': 1 / 3}
+
+
+def test_scaffold_without_an_abundance_gets_0(tmp_path, caplog):
+    scaffolds = tmp_path / 'scaffolds.fa'
+    scaffolds.write_text('>1\nACGT\n>2\nACGT\n')
+    out = tmp_path / 'scaffolds_abundance.fa'
+
+    complete_fasta_with_abundance(str(scaffolds), str(out), {'1': 4})
+
+    assert get_abundance_from_fasta(str(out)) == {'1': 4.0, '2': 0.0}
+    assert "Can't find the abundance for:2" in caplog.text
+
+
+def test_reading_a_fasta_without_abundances_stops(tmp_path):
+    fasta = tmp_path / 'scaffolds.fa'
+    fasta.write_text('>1\nACGT\n')
+    with pytest.raises(SystemExit):
+        get_abundance_from_fasta(str(fasta))

@@ -197,9 +197,11 @@ def nucleotidic_number(fastx):
     """
 
     parser = None
-    if isfasta(fastx):
+    # _open_fastq reads .gz too, so the format comes from the name without it
+    name = fastx[:-3] if fastx.endswith('.gz') else fastx
+    if isfasta(name):
         parser = read_fasta_file_handle
-    elif isfastq(fastx):
+    elif isfastq(name):
         parser = read_fastq_file_handle
 
     if parser is None:
