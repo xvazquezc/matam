@@ -497,7 +497,8 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        shorter scaffolds on some data. `-E 0` reproduces 1.0-1.6 for the
        same seed; README (3.3) and the `-E` help say so.
      - componentsearch outputs are named `..._N1_E1` again.
-     - MarkerMAG-nf uses MATAM's defaults, so it gets `-E 1`.
+     - MarkerMAG-nf passes `-E` from `--matam_min_overlap_edge` (default 1,
+       MATAM's default; added 2026-11-27).
      - `test_functional_pe.py` checks the default `-N 1 -E 1`.
      - Side observation: most SGA contigs are single unmerged reads (median
        150 bp; 27-31 k contigs for 47 sequences, ~63 k for Heavy). The
