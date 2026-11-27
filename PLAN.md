@@ -657,7 +657,38 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        `step3_score.pbs`, `step3_summary.py`); results in
        `/scratch/u71/$USER/matam_eval/bench/step3/` (`summary.txt`).
    - Overlap-position pruning (a speedup of the same loop, see item 1's
-     follow-ups) is left until after the production run on the fork.
+     follow-ups): evaluated in item 9, not worth doing.
+
+9. **Evaluated (2026-11-27): overlap-position pruning in `ovgraphbuild`,
+   not worth doing.**
+   - The idea (item 1's follow-ups): skip the read pairs that share a
+     reference but cannot overlap on it.
+   - Prototype (exact, not kept): per-read alignment spans built once; a
+     pair whose first shared reference shows no overlap is counted as
+     incompatible without the full comparison, with the same counters.
+     Tests: identical graph and statistics (`--debug` counters included)
+     with threads, shards and misplaced alignments.
+   - Gadi, Heavy filtered SAM (SILVA 144, 99%, 563,283 reads), 16 threads,
+     same node: graph and statistics byte-identical; 1.45 G of the 3.46 G
+     compared pairs (42%) rejected the cheap way, but the graph took
+     9:25 -> 9:20 wall and 8,602 -> 8,506 CPU s (-1%). Those pairs were
+     already cheap: the full function stops at the first overlap test.
+   - Where the time goes instead (`--debug` counters): 2.01 G pairs overlap
+     on the reference and are walked base by base
+     (`computeOverlapOnSameRef`); 1.62 G of them overlap by >= 50 bases, but
+     only 202 M are identical and get re-aligned (157 M by the perfect-overlap
+     shortcut), and 148.7 M become edges. So about 1.4 G overlapping pairs
+     differ somewhere, mostly reads of different organisms in a conserved
+     region. Position pruning cannot skip them (they do overlap), and
+     enumerating the candidates is not the cost either.
+   - **The remaining lever, if the graph step ever matters again:** with the
+     default `--min_identity 1.0`, the base walk could stop at the first
+     mismatch once the overlap length is known (exact; the statistics only
+     need the length and whether it is identical). Not measured; the graph
+     step is 9.5 min on 16 CPUs for Heavy, so not pursued now.
+   - Prototype patch and tests: scratchpad `bench/fast_reject.patch`,
+     `bench/test_ovgraphbuild_fast_reject.py`; job `bench/fast_reject.pbs`;
+     results in `/scratch/u71/$USER/matam_eval/bench/results/fast_reject/`.
 
 ## Note on conda-forge vs bioconda AVX-512
 
