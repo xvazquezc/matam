@@ -924,7 +924,8 @@ out of them; everything else is pinned as it is.
   - **Behaviour chosen:**
     - Empty input yields nothing.
     - FASTA lines are stripped and blank lines skipped.
-    - Sequence text before the first header raises `ValueError`. All copies
+    - Sequence text before the first header raises `ValueError` (kept, user
+      decision 2026-11-27). All copies
       used to prepend it silently to the first record, or return it under an
       empty header.
     - Handles are closed as before; any iterable of lines works for tables.
