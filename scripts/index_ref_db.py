@@ -25,23 +25,12 @@ matam_root_dir = os.path.dirname(matam_script_dir)
 # Get all dependencies bin
 
 
-class DefaultHelpParser(argparse.ArgumentParser):
-    """
-    This is a slightly modified argparse parser to display the full help
-    on parser error instead of only usage
-    """
-    def error(self, message):
-        sys.stderr.write('\nError: %s\n\n' % message)
-        self.print_help()
-        sys.exit(2)
-
-
 def parse_arguments():
     """
     Parse the command line, and check if arguments are correct
     """
     # Initiate argument parser
-    parser = DefaultHelpParser(description='Index ref db',
+    parser = argparse.ArgumentParser(description='Index ref db',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
 

@@ -159,23 +159,12 @@ def compute_fasta_stats(fasta_filepath):
     return fasta_stats
 
 
-class DefaultHelpParser(argparse.ArgumentParser):
-    """
-    This is a slightly modified argparse parser to display the full help
-    on parser error instead of only usage
-    """
-    def error(self, message):
-        logger.fatal(message)
-        self.print_help()
-        sys.exit(2)
-
-
 def parse_arguments(argv=None):
     """
     Parse the command line (argv, default sys.argv[1:]), and check if arguments are correct
     """
     # Initiate argument parser
-    parser = DefaultHelpParser(description='MATAM assembly',
+    parser = argparse.ArgumentParser(description='MATAM assembly',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
 
@@ -510,21 +499,17 @@ def parse_arguments(argv=None):
 
     # Arguments checking
     if args.score_threshold < 0 or args.score_threshold > 1:
-        parser.print_help()
-        raise Exception("score threshold not in range [0,1]")
+        parser.error('score threshold not in range [0,1]')
 
     if args.min_identity < 0 or args.min_identity > 1:
-        parser.print_help()
-        raise Exception("min identity not in range [0,1]")
+        parser.error('min identity not in range [0,1]')
 
     # Below 0.51, two sibling taxa can both reach the quorum.
     if args.quorum < 0.51 or args.quorum > 1:
-        parser.print_help()
-        raise Exception("quorum not in range [0.51,1]")
+        parser.error('quorum not in range [0.51,1]')
 
     if args.rdp_cutoff < 0 or args.rdp_cutoff > 1:
-        parser.print_help()
-        raise Exception("cutoff not in range [0,1]")
+        parser.error('cutoff not in range [0,1]')
 
     if args.stop_after:
         if args.filter_only:

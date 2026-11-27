@@ -3,6 +3,7 @@ helpers, and the assembler factory / SGA command line."""
 import gzip
 import importlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -64,8 +65,33 @@ def test_coverage_threshold_applies_only_to_auto_read_correction():
     ('--rdp_cutoff', '-1', 'cutoff not in range [0,1]'),
 ])
 def test_out_of_range_values_are_rejected(capsys, option, value, message):
-    with pytest.raises(Exception, match=message.replace('[', r'\[').replace(']', r'\]')):
+    with pytest.raises(SystemExit) as error:
         parse(option, value)
+    assert error.value.code == 2
+    assert 'error: ' + message in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('script, argv, message', [
+    ('matam_assembly.py', ['--forward', 'r1.fq', '--reverse', 'r2.fq', '-d', 'db', '--quorum', '0.5'],
+     'error: quorum not in range [0.51,1]'),
+    ('matam_assembly.py', ['--forward', 'r1.fq', '-d', 'db'],
+     'error: the following arguments are required: --reverse'),
+    ('matam_db_preprocessing.py', ['-i', 'refs.fasta', '--clustering_id_threshold', '1.5'],
+     'error: clustering id threshold not in range [0,1]'),
+    ('index_ref_db.py', [], 'error: the following arguments are required'),
+])
+def test_argument_errors_are_short_and_end_with_the_message(tmp_path, script, argv, message):
+    """Usage line and the error as the last line, exit code 2: no traceback and
+    no full help scrolling the error out of sight (--help still gives it)."""
+    result = subprocess.run([sys.executable, str(SCRIPTS_DIR / script), *argv],
+                            cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert result.stdout == ''
+    lines = result.stderr.strip().splitlines()
+    assert lines[0].startswith('usage: ')
+    assert message in lines[-1]
+    assert 'Traceback' not in result.stderr
+    assert len(lines) < 25
 
 
 @pytest.mark.parametrize('option, value', [

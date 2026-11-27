@@ -202,23 +202,12 @@ def compute_bin_list(compatibility_matrix):
     return bin_list
 
 
-class DefaultHelpParser(argparse.ArgumentParser):
-    """
-    This is a slightly modified argparse parser to display the full help
-    on parser error instead of only usage
-    """
-    def error(self, message):
-        sys.stderr.write('\nError: %s\n\n' % message)
-        self.print_help()
-        sys.exit(2)
-
-
 def parse_arguments():
     """
     Parse the command line, and check if arguments are correct
     """
     # Initiate argument parser
-    parser = DefaultHelpParser(description='Program description',
+    parser = argparse.ArgumentParser(description='Program description',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
 

@@ -38,23 +38,12 @@ DEFAULT_DOMAINS = ('archaea', 'bacteria', 'eukaryota')
 FNULL = open(os.devnull, 'w')
 
 
-class DefaultHelpParser(argparse.ArgumentParser):
-    """
-    This is a slightly modified argparse parser to display the full help
-    on parser error instead of only usage
-    """
-    def error(self, message):
-        sys.stderr.write('\nError: %s\n\n' % message)
-        self.print_help()
-        sys.exit(2)
-
-
 def parse_arguments():
     """
     Parse the command line, and check if arguments are correct
     """
     # Initiate argument parser
-    parser = DefaultHelpParser(description='MATAM db preprocessing',
+    parser = argparse.ArgumentParser(description='MATAM db preprocessing',
                                # to precisely format help display
                                formatter_class=lambda prog: argparse.HelpFormatter(prog, width=120, max_help_position=80))
 
@@ -230,13 +219,13 @@ def parse_arguments():
         args.clustered_ref = os.path.abspath(args.clustered_ref)
     if args.clustering_id_threshold is None:
         args.clustering_id_threshold = DEFAULT_CLUSTERING_ID_THRESHOLD
+    # Checked first: --close_relative_id defaults to it.
+    if args.clustering_id_threshold < 0 or args.clustering_id_threshold > 1:
+        parser.error('clustering id threshold not in range [0,1]')
     if args.close_relative_id is None:
         args.close_relative_id = args.clustering_id_threshold
     if args.close_relative_id < 0 or args.close_relative_id > 1:
         parser.error('--close_relative_id must be in [0,1]')
-    if args.clustering_id_threshold < 0 or args.clustering_id_threshold > 1:
-        parser.print_help()
-        raise Exception("clustering id threshold not in range [0,1]")
 
     # Set debug parameters
     if args.debug:
