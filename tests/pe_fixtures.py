@@ -21,7 +21,7 @@ EXAMPLE_READS = EXAMPLE_DIR / '16sp.art_HS25_pe_100bp_50x.fq'
 EXAMPLE_REFS = EXAMPLE_DIR / '16sp.fasta'
 EXAMPLE_TAXO = EXAMPLE_DIR / '16sp.taxo.tab'
 
-NAMING_STYLES = ('casava', 'sra', 'legacy')
+NAMING_STYLES = ('casava', 'sra', 'legacy', 'readids')
 
 
 def iter_example_pairs(every=1):
@@ -52,6 +52,8 @@ def mate_header(core_id, mate, style):
         return core_id
     if style == 'legacy':
         return '{}/{}'.format(core_id, mate)
+    if style == 'readids':  # fastq-dump --readids, and MarkerMAG's read names
+        return '{}.{}'.format(core_id, mate)
     raise ValueError('Unknown naming style: {}'.format(style))
 
 

@@ -9,7 +9,7 @@ import multiprocessing
 import argparse
 
 from fasta_utils import read_fasta_file_handle, format_seq
-from fastq_utils import read_fastq_file_handle
+from fastq_utils import is_same_pair, read_fastq_file_handle
 from pe_tables import load_read_components
 
 from assembler_factory import AssemblerFactory
@@ -43,13 +43,6 @@ def _iter_fastq_records(handle, source):
         yield header[1:].split()[0], seq.strip(), qual.strip()
 
 
-def pair_core_id(read_id):
-    """Pair identifier shared by both mates: the read ID without a /1 or /2 suffix."""
-    if len(read_id) > 2 and read_id[-2] == '/' and read_id[-1] in '12':
-        return read_id[:-2]
-    return read_id
-
-
 def _load_read_components(read_metanode_component_filepath):
     if not os.path.isfile(read_metanode_component_filepath):
         logger.fatal('The file storing the correspondance between reads and components does not exists:%s' % read_metanode_component_filepath)
@@ -78,7 +71,10 @@ def _split_pairs_by_component(pairs, read_component_dict):
     component_reads_dict = defaultdict(lambda: ([], []))
     within = spanning = one_mate = unassigned = 0
     for forward_read, reverse_read in pairs:
-        if pair_core_id(forward_read[0]) != pair_core_id(reverse_read[0]):
+        # Same rule as the input check (validate_paired_fastq), so every
+        # naming the input accepts (shared ID, or /1 /2, .1 .2, _1 _2, :1 :2)
+        # is accepted here too.
+        if not is_same_pair(forward_read[0], reverse_read[0]):
             logger.fatal('Mates are out of sync: %s vs %s', forward_read[0], reverse_read[0])
             sys.exit("An error occured. Can't extract component's reads")
         forward_component = read_component_dict.get((forward_read[0], 1))

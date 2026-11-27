@@ -150,3 +150,22 @@ def test_nucleotide_count_of_an_unknown_format_stops(tmp_path):
     path.write_text('ACGT\n')
     with pytest.raises(SystemExit):
         components_assembly.nucleotidic_number(str(path))
+
+
+@pytest.mark.parametrize('id1, id2', [
+    ('r1', 'r1'), ('r1/1', 'r1/2'), ('Heavy_1691.1', 'Heavy_1691.2'), ('r1_1', 'r1_2'), ('r1:1', 'r1:2'),
+])
+def test_pairs_are_split_by_component_for_every_accepted_naming(id1, id2):
+    """The input check (validate_paired_fastq) accepts these namings, so the
+    component split must too. MarkerMAG's .1/.2 names used to stop every
+    assembly with 'Mates are out of sync'."""
+    pairs = [((id1, 'ACGT', 'IIII'), (id2, 'TTTT', 'IIII'))]
+    components = components_assembly._split_pairs_by_component(pairs, {(id1, 1): '7', (id2, 2): '7'})
+    assert dict(components) == {'7': ([(id1, 'ACGT', 'IIII')], [(id2, 'TTTT', 'IIII')])}
+
+
+@pytest.mark.parametrize('id1, id2', [('r1.1', 'r2.2'), ('r1/1', 'r1.2'), ('r1', 'r2')])
+def test_mates_out_of_step_stop_the_split(id1, id2):
+    pairs = [((id1, 'ACGT', 'IIII'), (id2, 'TTTT', 'IIII'))]
+    with pytest.raises(SystemExit):
+        components_assembly._split_pairs_by_component(pairs, {})

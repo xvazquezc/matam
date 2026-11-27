@@ -615,9 +615,32 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      misplaced first alignments where the option only adds edges and keeps
      the shared edges' lines and order, threads and shards), plus a CLI and a
      functional test. Suite 512 passed.
-   - **(2) next:** on Gadi, the Heavy pairs mapped against SILVA 144 (99%)
-     with the fork, graph built with and without the option on the same
-     filtered SAM: edges added, components.
+   - **(2) done (2026-11-27):** Gadi, fork 0e97224, Heavy 16S pairs
+     (478,809 pairs) mapped against SILVA 144 NR99 clustered at 99%; both
+     rules on the same filtered SAM (563,283 reads), 16 CPUs:
+
+     | | Default | `--any_shared_ref` |
+     |---|---:|---:|
+     | Edges | 148,687,745 | 149,977,670 (+0.87%) |
+     | Contracted nodes / edges | 59,901 / 39,249 | 58,665 / 38,505 |
+     | After `-N 1 -E 1`, nodes / edges | 10,995 / 6,444 | 10,821 / 6,326 |
+     | Components | 8,239 | 8,069 (-2.1%) |
+     | Graph building | 571 s | 703 s (+23%) |
+
+     - No default edge lost (sorted edge files compared); 73,522 reads gain
+       an edge.
+     - 9.57 M pairs rejected at their first shared reference are compatible
+       on a later one; 1.29 M of them (13%) pass the de novo read-to-read
+       alignment and become edges.
+     - About the size of the `-E 1` change: a slightly more connected graph,
+       2% fewer components.
+   - **(3) running:** assemblies with both rules, Heavy, seeds 1-5,
+     to scaffolding, scored seed by seed (scaffolds, N50, `uchime_ref`
+     chimeras against SILVA 144, >=99% hits), as for `-E`. The first attempt
+     (2026-11-27) stopped at contig assembly in all 10 runs on the Heavy
+     reads' `.1`/`.2` mate names, a bug in the component read split (fixed,
+     see TESTING_PLAN.md); it would also have stopped production MarkerMAG-nf
+     runs on the fork.
    - Overlap-position pruning (a speedup of the same loop, see item 1's
      follow-ups) is left until after the production run on the fork.
 
