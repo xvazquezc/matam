@@ -582,8 +582,8 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      `bench_map.pbs`, `compare_threads.pbs`); results in
      `/scratch/u71/$USER/matam_eval/bench/results/`.
 
-8. **To evaluate: the first shared reference decides a read pair
-   (`ovgraphbuild`).**
+8. **Done (2026-11-27): the first shared reference decides a read pair
+   (`ovgraphbuild`); evaluated, kept.**
    - `computeReadsPairCompatibility` walks the two reads' alignments
      (I-major, J-minor) and stops at the first alignment pair on a shared
      reference: compatible gives an edge, anything else (no overlap on the
@@ -634,13 +634,28 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
        alignment and become edges.
      - About the size of the `-E 1` change: a slightly more connected graph,
        2% fewer components.
-   - **(3) running:** assemblies with both rules, Heavy, seeds 1-5,
-     to scaffolding, scored seed by seed (scaffolds, N50, `uchime_ref`
-     chimeras against SILVA 144, >=99% hits), as for `-E`. The first attempt
-     (2026-11-27) stopped at contig assembly in all 10 runs on the Heavy
-     reads' `.1`/`.2` mate names, a bug in the component read split (fixed,
-     see TESTING_PLAN.md); it would also have stopped production MarkerMAG-nf
-     runs on the fork.
+   - **(3) done (2026-11-27):** Gadi, fork 3bea8fc, Heavy pairs mapped once
+     (`--read_alignments`), both rules x seeds 1-5 to scaffolding; scaffolds
+     scored against the complete SILVA 144 set (`vsearch --uchime_ref`,
+     `--usearch_global`). Means of the 5 seeds, default -> `--any_shared_ref`
+     (any higher in how many seeds):
+     - components 8,190 -> 8,094 (0/5);
+     - scaffolds 504.6 -> 504.8 (2/5), total bp 414,117 -> 415,618 (2/5),
+       N50 857 -> 859 (2/5), >=1,200 bp 79.0 -> 80.4 (4/5);
+     - **chimeras 16.2 -> 18.8 (4/5)**; scaffolds with a >=99% hit
+       294.8 -> 290.6 (1/5); median best-hit identity 99.2% in both.
+     - **Conclusion:** no gain in contiguity, slightly more chimeras and
+       fewer near-exact scaffolds. The default stays the first shared
+       reference (as in 1.0-1.6): order-dependent, but in practice a little
+       extra stringency against chimeric joins, the counterpart of the
+       `-E 1` result. `--any_shared_ref` stays as an option, off by default.
+     - The first attempt stopped at contig assembly in all 10 runs on the
+       Heavy reads' `.1`/`.2` mate names, a bug in the component read split
+       (fixed, see TESTING_PLAN.md) that would also have stopped production
+       MarkerMAG-nf runs on the fork.
+     - Scripts: scratchpad `bench/step3/` (`step3_prep.pbs`, `step3_asm.pbs`,
+       `step3_score.pbs`, `step3_summary.py`); results in
+       `/scratch/u71/$USER/matam_eval/bench/step3/` (`summary.txt`).
    - Overlap-position pruning (a speedup of the same loop, see item 1's
      follow-ups) is left until after the production run on the fork.
 

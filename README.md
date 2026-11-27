@@ -241,7 +241,8 @@ alignment order: if they don't overlap there (a partial reference, a soft-clippe
 misplaced hit), they get no edge even if they overlap on another shared reference.
 `--any_shared_ref` links them when any shared reference shows a compatible overlap, which
 can only add edges, each still checked by aligning the two reads to each other. It is off
-by default (as in MATAM 1.0-1.6) while its effect on assemblies is evaluated.
+by default (as in MATAM 1.0-1.6): on real data it added about 1% of edges and gave no
+longer assemblies, but slightly more chimeric scaffolds.
 
 MATAM requests gzip-compressed SortMeRNA read-mapping reports to reduce
 temporary storage. It automatically accepts SortMeRNA's `.fq` or `.fastq`
