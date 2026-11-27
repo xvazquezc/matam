@@ -691,6 +691,38 @@ by taxon after the QNAME sort: shards 0 and 40 of *mixed* took 118 s and 53 s.
      `bench/test_ovgraphbuild_fast_reject.py`; job `bench/fast_reject.pbs`;
      results in `/scratch/u71/$USER/matam_eval/bench/results/fast_reject/`.
 
+10. **Raw-read 16S filtering (MATAM_FILTER) time on Gadi (2026-11-27).**
+   - Raw samples are large: Heavy R1/R2 236 GB each (~752 M pairs, ~1.5 G
+     reads), Bulk 213 GB each (~670 M pairs), uncompressed FASTQ.
+   - Benchmark: the first 10 M pairs of raw Heavy, MATAM_FILTER as
+     MarkerMAG-nf runs it, fork 3570286, SILVA 144 NR99 at 99%, `normal`:
+
+     | | 16 CPUs | 48 CPUs |
+     |---|---:|---:|
+     | Read mapping | 822.6 s | 335.4 s (2.46x) |
+     | CPU per raw read | 0.62 ms | 0.69 ms |
+     | CPU efficiency | 92% | 80% |
+     | Peak RSS | 15.2 GB | 15.3 GB |
+     | 16S reads recruited | 13,176 (0.07%) | 13,176 |
+
+     The input check took 23-24 s for the 20 M reads.
+   - Projected per sample (linear; plus ~30 min to read and check 472 GB):
+     Heavy ~34 h at 8 CPUs (over the 24 h `process_matam` walltime), ~18 h
+     at 16, ~7.5 h at 48; Bulk ~30 / 16 / 6.7 h. One job per sample is
+     enough at 16-48 CPUs (no read splitting); 48 CPUs cost ~25% more SU
+     than 16 but finish 2.4x sooner.
+   - Follow-up: MATAM_FILTER gets its own resources in MarkerMAG-nf (CPUs,
+     walltime). Still to measure: the work directory's peak disk use (the
+     sampler failed) and recruitment against the 1.6.0 run's 16S reads.
+   - Found on the way: MarkerMAG-nf's filter wrapper, and MarkerMAG's
+     linking and copy-number steps, did not recognise `.1`/`.2` mate names
+     (MarkerMAG's own naming): the wrapper stopped, and linking would have
+     parsed the two mates of every pair as separate reads, losing the
+     paired-read links silently. Fixed in MarkerMAG-nf: each sample's mate
+     naming is detected from its reads, read IDs are never changed.
+   - Script: scratchpad `bench/raw_filter.pbs`; results in
+     `/scratch/u71/$USER/matam_raw/results/`.
+
 ## Note on conda-forge vs bioconda AVX-512
 
 Verified with `objdump -d | grep -c "zmm\|evex"` across environments:
